@@ -17,6 +17,18 @@ Parameters:
     Type: String
     Description: SSM parameter path holding the Slash service account password
     Default: /ring-central-controller/slash/slash-service-password
+  JeffBotMondayApiKey:
+    Type: String
+    Default: /ring-central-controller/monday/jeff-bot-api-key
+  JaimeMondayApiKey:
+    Type: String
+    Default: /ring-central-controller/monday/jaime-api-key
+  VigMondayApiKey:
+    Type: String
+    Default: /ring-central-controller/monday/vig-api-key
+  AndersonMondayApiKey:
+    Type: String
+    Default: /ring-central-controller/monday/anderson-api-key
 
 Resources:
   RingCentralControllerFunction:
@@ -38,6 +50,10 @@ Resources:
           RC_CLIENT_SECRET_PARAM: !Ref RCClientSecret
           RC_JWT_PARAM: !Ref RCJWT
           SLASH_SERVICE_PASSWORD_PARAM: !Ref SlashServicePassword
+          JEFF_BOT_MONDAY_API_KEY: !Ref JeffBotMondayApiKey
+          JAIME_MONDAY_API_KEY: !Ref JaimeMondayApiKey
+          VIG_MONDAY_API_KEY: !Ref VigMondayApiKey
+          ANDERSON_MONDAY_API_KEY: !Ref AndersonMondayApiKey
       Policies:
         - SSMParameterReadPolicy:
             ParameterName: ring-central-controller/*
