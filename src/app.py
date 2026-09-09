@@ -6,40 +6,16 @@ the CL (ClientsLeads) and AB (Applicants Board) Lambdas over a Function URL.
 
 import base64
 import json
-import logging
 import os
 
 import boto3
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+from logger_config import logger
 
 ssm = boto3.client("ssm")
 
 # Resolved SSM values, cached for the life of the execution environment.
 _param_cache = {}
-
-
-def _get_param(env_var_name):
-    """Resolve the SSM parameter whose path is held in ``env_var_name``."""
-    if env_var_name in _param_cache:
-        return _param_cache[env_var_name]
-
-    path = os.environ[env_var_name]
-    response = ssm.get_parameter(Name=path, WithDecryption=True)
-    value = response["Parameter"]["Value"]
-    _param_cache[env_var_name] = value
-    return value
-
-
-def get_config():
-    """Return the Ring Central and Slash credentials from SSM."""
-    return {
-        "rc_client_secret": _get_param("RC_CLIENT_SECRET_PARAM"),
-        "rc_jwt": _get_param("RC_JWT_PARAM"),
-        "slash_service_password": _get_param("SLASH_SERVICE_PASSWORD_PARAM"),
-    }
-
 
 def _response(status_code, body=None, headers=None):
     return {

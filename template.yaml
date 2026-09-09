@@ -47,9 +47,9 @@ Resources:
         LogGroup: !Ref RingCentralControllerLogGroup
       Environment:
         Variables:
-          RC_CLIENT_SECRET_PARAM: !Ref RCClientSecret
-          RC_JWT_PARAM: !Ref RCJWT
-          SLASH_SERVICE_PASSWORD_PARAM: !Ref SlashServicePassword
+          RC_CLIENT_SECRET: !Ref RCClientSecret
+          RC_JWT: !Ref RCJWT
+          SLASH_SERVICE_PASSWORD: !Ref SlashServicePassword
           JEFF_BOT_MONDAY_API_KEY: !Ref JeffBotMondayApiKey
           JAIME_MONDAY_API_KEY: !Ref JaimeMondayApiKey
           VIG_MONDAY_API_KEY: !Ref VigMondayApiKey
