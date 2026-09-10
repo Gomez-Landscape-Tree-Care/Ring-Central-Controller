@@ -11,7 +11,7 @@ import re
 
 import boto3
 
-from http_utils import get_body, response
+from utils.http_utils import get_body, response
 from logger_config import logger
 
 sqs = boto3.client("sqs")

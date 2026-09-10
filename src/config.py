@@ -14,6 +14,7 @@ def _get_param(env_var_name):
     return value
 
 MAIN_COMPANY_LINE = "+18187187470"
+TEST_PHONE = '+16264888229'
 # The RingCentral extension a call was placed *from* -> the name that extension
 # reads as in a timeline entry, as in "Vig is calling Jane Doe", and (where the
 # extension has one) its monday user id. Also the switch for whose calls are

@@ -7,7 +7,7 @@ Board) Lambdas directly over a Function URL.
 
 import json
 
-from http_utils import get_body, response
+from utils.http_utils import get_body, response
 from logger_config import logger
 from services.ring_central.workflow import process_ring_central
 
