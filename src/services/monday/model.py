@@ -51,11 +51,10 @@ def _wait_monday(retry_state):
 
 
 class MondayModel:
-    def __init__(self, url=MONDAY_API_URL, api_key=JEFF_BOT_MONDAY_API_KEY, session=None,
-                 timeout=TIMEOUT):
-        self._url = url
+    def __init__(self, api_key=JEFF_BOT_MONDAY_API_KEY, timeout=TIMEOUT):
+        self._url = MONDAY_API_URL
         self._timeout = timeout
-        self._session = session or requests.Session()
+        self._session = requests.Session()
         # Content-Type is deliberately not pinned here: requests derives it per
         # request, application/json for json= and multipart with a boundary for
         # files=, and a pinned value would break the upload transport.
@@ -69,10 +68,7 @@ class MondayModel:
         """Execute a Monday.com GraphQL request and return payload["data"].
 
         Retries transient failures, then re-raises with `op` named so the alert
-        in lambda_handler says which call failed. Alerting is not done here:
-        the handler is the only layer that sees every kind of failure, Monday
-        or not, and the only one that knows the message id to recover from the
-        DLQ. The query itself is too big for an SMS and stays in the log.
+        in lambda_handler says which call failed.
         """
         try:
             logger.info(op)

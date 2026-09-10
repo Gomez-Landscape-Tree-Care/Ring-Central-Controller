@@ -27,18 +27,15 @@ RING_USERS: dict[str, dict] = {
     "663812029": {"name": "Call Queue"},
 }
 CALL_QUEUE_EXTENSION = "663812029"
-RC_CLIENT_ID = "a9qvVMZhT10cnS1ZbGGSbN"
+RC_CLIENT_ID = "WZPBY9P51XYfyE87ZiCHHS"
 RC_SERVER = "https://platform.ringcentral.com"
-RC_CLIENT_SECRET = _get_param("RC_CLIENT_SECRET")
-RC_JWT = _get_param("RC_JWT")
 
-SLASH_SERVICE_PASSWORD = _get_param("SLASH_SERVICE_PASSWORD")
 SLASH_API_URL = "https://api.useslash.com"
 SLASH_SERVICE_EMAIL = "admin@gomezltc.com"
 
 MONDAY_API_URL = "https://api.monday.com/v2"
 MONDAY_FILE_URL = f"{MONDAY_API_URL}/file"
-JEFF_BOT_MONDAY_API_KEY = _get_param('JEFF_BOT_MONDAY_API_KEY')
+JEFF_BOT = 'JEFF_BOT_MONDAY_API_KEY'
 JEFF_BOT_USER_ID = '76113590'
 MONDAY_USERS: dict[str, dict] = {
     '14382341': {
@@ -59,6 +56,26 @@ MONDAY_USERS: dict[str, dict] = {
     JEFF_BOT_USER_ID: {
         'informal_name': 'Jeff Bot',
         'full_name': 'Jeff Bot',
-        'api_key': 'JEFF_BOT_MONDAY_API_KEY',
+        'api_key': JEFF_BOT,
     },
 }
+
+LOCAL_TESTING = "AWS_LAMBDA_FUNCTION_NAME" not in os.environ
+
+if LOCAL_TESTING:
+    # .env is git-ignored and never read by the deployed Lambda - it only
+    # exists so local runs have something to export into os.environ. Note it
+    # holds the token itself, whereas in Lambda the env var holds the SSM path.
+    from dotenv import load_dotenv
+
+    load_dotenv()
+
+    JEFF_BOT_MONDAY_API_KEY = os.environ[JEFF_BOT]
+    RC_CLIENT_SECRET = os.environ['RC_CLIENT_SECRET']
+    RC_JWT = os.environ['RC_JWT']
+    SLASH_SERVICE_PASSWORD = os.environ['SLASH_SERVICE_PASSWORD']
+else:
+    JEFF_BOT_MONDAY_API_KEY = _get_param(JEFF_BOT)
+    RC_CLIENT_SECRET = _get_param("RC_CLIENT_SECRET")
+    RC_JWT = _get_param("RC_JWT")
+    SLASH_SERVICE_PASSWORD = _get_param("SLASH_SERVICE_PASSWORD")

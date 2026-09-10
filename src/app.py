@@ -11,6 +11,7 @@ import os
 import boto3
 
 from logger_config import logger
+from services.ring_central.workflow import process_ring_central
 
 ssm = boto3.client("ssm")
 
@@ -56,8 +57,10 @@ def lambda_handler(event, context):
     body = _get_body(event)
     logger.info("Request %s %s", method, path)
 
-    # TODO: route to the Ring Central webhook handler vs. the CL/AB handler and
-    # drive services.ring_central / services.slash using get_config().
-    del body
+    # A RingCentral webhook notification always carries subscriptionId; a
+    # CL/AB request never will.
+    if "subscriptionId" in body:
+        process_ring_central(body)
+    # TODO: route CL/AB requests to services.slash.
 
     return _response(200, {"ok": True})
