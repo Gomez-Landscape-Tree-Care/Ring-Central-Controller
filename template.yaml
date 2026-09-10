@@ -34,14 +34,14 @@ Resources:
   RingCentralControllerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: ring-central-controller
+      FunctionName: ring-central-controller-processor
       Description: Ring Central webhook receiver and CL/AB request handler
       CodeUri: src/
       Handler: app.lambda_handler
       Runtime: python3.12
       Architectures:
         - arm64
-      Timeout: 30
+      Timeout: 120
       MemorySize: 512
       LoggingConfig:
         LogGroup: !Ref RingCentralControllerLogGroup
