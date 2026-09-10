@@ -172,20 +172,18 @@ class RingCentralModel:
         )
         return str(data.get("id") or "")
 
-    def get_messages(self, extension_id, message_ids: list, op: str = "") -> list:
-        """Bulk-fetch message-store records for the given ids in one request.
+    def get_message(self, extension_id, message_id, op: str = "") -> dict:
+        """Fetch the message-store record for one id.
 
-        Message Store webhook notifications carry only ids in `newMessageIds`;
-        repeating `messageId` as a query param (list value) fetches them all in
-        a single GET instead of one request per id.
+        Fetched by path because the list endpoint has no id filter: passing
+        `messageId` there is ignored and answers the mailbox's first page.
         """
-        data = self.request(
+        return self.request(
             "GET",
-            f"/restapi/v1.0/account/~/extension/{extension_id}/message-store",
-            query_params={"messageId": message_ids},
-            op=op or f"get_messages {message_ids}",
+            f"/restapi/v1.0/account/~/extension/{extension_id}"
+            f"/message-store/{message_id}",
+            op=op or f"get_message {message_id}",
         )
-        return data.get("records") or []
 
 
 @lru_cache(maxsize=1)

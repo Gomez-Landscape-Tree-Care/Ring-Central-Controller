@@ -30,19 +30,22 @@ Parameters:
     Type: String
     Default: /ring-central-controller/monday/anderson-api-key
 
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - arm64
+    CodeUri: src/
+    MemorySize: 512
+
 Resources:
   RingCentralControllerFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: ring-central-controller-processor
-      Description: Ring Central webhook receiver and CL/AB request handler
-      CodeUri: src/
+      FunctionName: ring-central-controller
+      Description: Telephony queue consumer, message-store webhook and CL/AB request handler
       Handler: app.lambda_handler
-      Runtime: python3.12
-      Architectures:
-        - arm64
       Timeout: 120
-      MemorySize: 512
       LoggingConfig:
         LogGroup: !Ref RingCentralControllerLogGroup
       Environment:
@@ -57,6 +60,12 @@ Resources:
       Policies:
         - SSMParameterReadPolicy:
             ParameterName: ring-central-controller/*
+      Events:
+        RingCentralEvents:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt RingCentralEventQueue.Arn
+            BatchSize: 1
       FunctionUrlConfig:
         AuthType: NONE
 
@@ -66,10 +75,66 @@ Resources:
       LogGroupName: /aws/lambda/ring-central-controller
       RetentionInDays: 30
 
+  RingCentralReceiverFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ring-central-controller-receiver
+      Description: Public webhook receiver — enqueues telephony notifications
+      Handler: receiver.lambda_handler
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref RingCentralReceiverLogGroup
+      Environment:
+        Variables:
+          EVENT_QUEUE_URL: !Ref RingCentralEventQueue
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt RingCentralEventQueue.QueueName
+      FunctionUrlConfig:
+        AuthType: NONE
+
+  RingCentralReceiverLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/ring-central-controller-receiver
+      RetentionInDays: 30
+
+  # Ordered per call, deduplicated per call state. The receiver always supplies
+  # both ids, so content based deduplication stays off.
+  RingCentralEventQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ring-central-controller-events.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      DeduplicationScope: messageGroup
+      FifoThroughputLimit: perMessageGroupId
+      VisibilityTimeout: 720
+      MessageRetentionPeriod: 345600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt RingCentralEventDLQ.Arn
+        maxReceiveCount: 3
+
+  RingCentralEventDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: ring-central-controller-events-dlq.fifo
+      FifoQueue: true
+      MessageRetentionPeriod: 1209600
+
 Outputs:
   FunctionUrl:
-    Description: Public HTTPS endpoint — register this as the Ring Central webhook delivery address
+    Description: Public HTTPS endpoint for the message-store webhook subscriptions
     Value: !GetAtt RingCentralControllerFunctionUrl.FunctionUrl
   FunctionArn:
     Description: ARN of the controller function
     Value: !GetAtt RingCentralControllerFunction.Arn
+  ReceiverFunctionUrl:
+    Description: Public HTTPS endpoint for the telephony sessions webhook subscription
+    Value: !GetAtt RingCentralReceiverFunctionUrl.FunctionUrl
+  EventQueueUrl:
+    Description: FIFO queue carrying telephony notifications to the controller
+    Value: !Ref RingCentralEventQueue
+  EventDLQUrl:
+    Description: Dead letter queue for telephony notifications that exhausted their retries
+    Value: !Ref RingCentralEventDLQ

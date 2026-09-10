@@ -7,14 +7,21 @@ class RingCentralController:
         self.client = client
 
     def get_messages(self, extension_id, message_ids: list, op: str = "") -> list:
-        """Bulk-fetch message-store records for the given ids, swallowing failures.
+        """Fetch the message-store records for the given ids, one request each.
 
-        A webhook handler that lets this raise risks RingCentral retrying (or
-        dead-lettering) the whole notification over a fetch failure; an empty
-        list here just means nothing gets processed this round.
+        A failed id is skipped rather than raising: a webhook handler that lets
+        this raise risks RingCentral retrying (or dead-lettering) the whole
+        notification over one fetch, and the records that did arrive are still
+        worth processing. One purged or inaccessible message therefore does not
+        cost us its neighbours.
         """
-        try:
-            return self.client.get_messages(extension_id, message_ids, op=op)
-        except Exception as e:
-            logger.exception(f"RingCentralController.get_messages failed: {e}")
-            return []
+        records = []
+        for message_id in message_ids:
+            try:
+                records.append(
+                    self.client.get_message(extension_id, message_id, op=op))
+            except Exception as e:
+                logger.warning(f"Skipping message {message_id}: {e}")
+
+        logger.info(f"Records: {records}")
+        return records
