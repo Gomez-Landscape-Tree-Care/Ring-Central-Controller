@@ -33,6 +33,10 @@ RC_SERVER = "https://platform.ringcentral.com"
 SLASH_API_URL = "https://api.useslash.com"
 SLASH_SERVICE_EMAIL = "admin@gomezltc.com"
 
+AB_BOARD_ID = 18425636917
+AB_SUBITEMS_BOARD_ID = 18425636924
+CL_BOARD_ID = 18408880626
+
 MONDAY_API_URL = "https://api.monday.com/v2"
 MONDAY_FILE_URL = f"{MONDAY_API_URL}/file"
 JEFF_BOT = 'JEFF_BOT_MONDAY_API_KEY'

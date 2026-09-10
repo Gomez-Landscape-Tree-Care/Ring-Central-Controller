@@ -37,6 +37,7 @@ def _get_body(event):
 
 
 def lambda_handler(event, context):
+    logger.info(event)
     request = event.get("requestContext", {}).get("http", {})
     method = request.get("method")
     path = request.get("path", "/")
