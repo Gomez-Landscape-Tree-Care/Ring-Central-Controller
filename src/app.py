@@ -1,8 +1,10 @@
 """Lambda entrypoint for the Ring Central Controller.
 
-Consumes Ring Central telephony notifications off the FIFO queue, and receives
-message-store webhooks and requests from the CL (ClientsLeads) and AB (Applicants
-Board) Lambdas directly over a Function URL.
+Consumes Ring Central telephony notifications, monday webhooks and CL
+(ClientsLeads) / AB (Applicants Board) send requests off the FIFO queue, and
+receives message-store webhooks directly over a Function URL. The three queued
+sources reach the queue through the receiver, which is the only function that
+can write to it.
 """
 
 import json
@@ -11,7 +13,8 @@ import sources
 from utils.http_utils import get_body, response
 from logger_config import logger
 from services.monday.workflow import process_monday
-from services.ring_central.workflow import process_ring_central
+from services.ring_central.workflow import (process_ring_central,
+                                            process_send_request)
 
 
 def _process_queue_records(records):
@@ -27,6 +30,8 @@ def _process_queue_records(records):
         # Messages enqueued before the source attribute existed are Ring Central.
         if source == sources.MONDAY:
             process_monday(body)
+        elif source in (sources.AB, sources.CL):
+            process_send_request(body, source)
         else:
             process_ring_central(body)
 
@@ -52,16 +57,15 @@ def lambda_handler(event, context):
         return response(200, {}, {"Validation-Token": validation_token})
 
     # TODO: authenticate the caller before doing any work. The Function URL is
-    # public (AuthType NONE) — verify the Ring Central verification token on
-    # webhooks and a shared secret on CL/AB requests.
+    # public (AuthType NONE) — verify the Ring Central verification token.
 
     body = get_body(event)
     logger.info("Request %s %s", method, path)
 
-    # A RingCentral webhook notification always carries subscriptionId; a
-    # CL/AB request never will.
+    # A RingCentral webhook notification always carries subscriptionId. Nothing
+    # else is served here: CL/AB send requests go to the receiver, which is the
+    # function that can put them on the queue.
     if "subscriptionId" in body:
         process_ring_central(body)
-    # TODO: route CL/AB requests to services.slash.
 
     return response(200, {"ok": True})

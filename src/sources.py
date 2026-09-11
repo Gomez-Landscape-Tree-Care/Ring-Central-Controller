@@ -6,3 +6,5 @@ and the receiver function has none of those env vars.
 
 RING_CENTRAL = "ring-central"
 MONDAY = "monday"
+AB = "ab"
+CL = "cl"

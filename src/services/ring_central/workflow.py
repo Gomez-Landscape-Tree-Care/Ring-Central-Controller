@@ -1,4 +1,9 @@
-"""Route inbound RingCentral webhook notifications by event type."""
+"""Route inbound RingCentral webhook notifications, and send SMS back out.
+
+Both halves live here because they are the same message twice: record_sms
+writes down a text that already happened, and send_and_record puts one on the
+wire and then writes it down the same way.
+"""
 
 from datetime import datetime, timezone
 
@@ -8,6 +13,7 @@ from config import (JEFF_BOT_USER_ID, MAIN_COMPANY_LINE, MONDAY_USERS,
 from logger_config import logger
 from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
+from services.ring_central.model import MAX_SMS_CHARS
 from services.slash.controller import get_controller as get_slash_controller
 from utils.date import internal_timestamp
 from utils.normalize import normalize_phone_with_plus
@@ -184,6 +190,111 @@ def record_sms(message):
             outbound=True)
         rebuild_timelines(phone, items)
     return message
+
+
+def process_send_request(payload, source):
+    """A CL or AB Lambda asking for one text to go out.
+
+    The phone arrives normalized and the message non-empty - the receiver settles
+    both before enqueueing, since a request it could not act on is not worth a
+    queue message. Checked again anyway, because the queue is the trust boundary
+    this side of it and a send is not a thing to attempt on a half-formed record.
+
+    Stamped here rather than off the request: a send request carries no time of
+    its own, and what the Slash row and the Timeline line are recording is the
+    moment the text went out.
+    """
+    phone = payload.get('phone')
+    text = (payload.get('message') or "").strip()
+    if not phone or not text:
+        logger.info("%s send request carries no %s", source,
+                    "phone" if not phone else "message")
+        return None
+
+    return send_and_record(
+        phone, text,
+        timestamp=datetime.now(timezone.utc),
+        author_id=str(payload.get('monday_user_id') or ''),
+        op=f"Text {source} request to {phone}")
+
+
+def send_and_record(phone, text, *, timestamp, author_id, op="", skip_board=None):
+    """Send one SMS and put it everywhere an outbound text belongs.
+
+    The outbound twin of record_sms, and the one send path the service has:
+    an agent typing an update and a CL/AB request both end here.
+
+    An SMS is the one thing this service does that cannot be taken back, and
+    every caller arrives over the FIFO queue, which redelivers whatever raises -
+    so everything that can fail is done before the send and nothing after it is
+    allowed to raise. That ordering is the at-most-once guarantee, not a
+    tidiness: a raise past send_sms would put a second copy of the text on a real
+    person's phone.
+
+    `skip_board` is for the caller whose board already shows the message - the
+    agent's own item carries what they typed. Skipped by board rather than by
+    item id, because two items on one board can carry the same phone and
+    resolve_items answers with the first, which need not be the one they typed on.
+    """
+    # The rollout gate the others cannot stand in for: resolve_items and the
+    # Slash controller each hold one, but neither is on the send path, and this
+    # is the only place a number outside the rollout would be texted rather than
+    # merely written about.
+    if phone != TEST_PHONE:
+        logger.info("%s is outside the rollout, leaving the text unsent", phone)
+        return None
+
+    # Cut here rather than leaving it to the model's own slice, so the Slash row
+    # and the board updates carry what went on the wire rather than what was asked.
+    if len(text) > MAX_SMS_CHARS:
+        logger.warning("Text to %s is %d chars, sending the first %d",
+                       phone, len(text), MAX_SMS_CHARS)
+        text = text[:MAX_SMS_CHARS]
+
+    # Up front, once, as record_sms resolves before its writes: the rebuild and
+    # the updates below write to the same items, and this is the board search
+    # they would otherwise pay for separately.
+    monday = get_monday_controller()
+    items = monday.resolve_items(phone)
+
+    RingCentralController().send_sms(text=text, to_number=phone, op=op)
+
+    slash = get_slash_controller()
+    try:
+        slash.create_text_message(
+            phone=phone, text=text, timestamp=timestamp, outbound=True,
+            monday_user_id=author_id)
+    except Exception:
+        logger.exception("Slash message failed for %s, already sent", phone)
+
+    try:
+        slash.create_timeline_entry(
+            phone=phone,
+            entry=timeline_entry(author_id),
+            entry_type=SMS_ENTRY_TYPE,
+            timestamp=timestamp,
+            outbound=True)
+    except Exception:
+        logger.exception("Slash timeline entry failed for %s, already sent", phone)
+
+    rebuild_timelines(phone, items)
+
+    body = update_body(text, timestamp, True)
+    for board, item_id in items:
+        if skip_board is None or board.id != skip_board.id:
+            monday.create_update(board, item_id, body)
+    return None
+
+
+def timeline_entry(author_id) -> str:
+    """The Timeline line for an SMS sent off a board or a CL/AB request.
+
+    An author MONDAY_USERS has no row for is named by nobody rather than by Jeff
+    Bot: the fallback stands in for the name, not for the person, and crediting
+    somebody else's text to the bot is worse than leaving it unattributed.
+    """
+    sender = MONDAY_USERS.get(author_id, {}).get('informal_name')
+    return f"{sender} sent a text message" if sender else "Someone sent a text message"
 
 
 def rebuild_timelines(phone, items) -> None:

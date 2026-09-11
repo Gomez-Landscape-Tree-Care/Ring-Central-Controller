@@ -1,9 +1,10 @@
 """Lambda entrypoint for the public webhook receiver.
 
-Accepts Ring Central telephony session notifications on "/" and monday.com
-webhooks on "/monday", and puts both on the FIFO queue the processor consumes.
-No Ring Central or monday API work happens here — that belongs on the far side
-of the queue.
+Accepts Ring Central telephony session notifications on "/", monday.com webhooks
+on "/monday", and send-this-text requests from the AB (Applicants Board) and CL
+(Clients & Leads) Lambdas on "/ab" and "/cl". All of them go on the FIFO queue
+the processor consumes. No Ring Central or monday API work happens here — that
+belongs on the far side of the queue.
 """
 
 import json
@@ -15,12 +16,18 @@ import boto3
 
 import sources
 from utils.http_utils import get_body, response
+from utils.normalize import normalize_phone_with_plus
 from logger_config import logger
 
 sqs = boto3.client("sqs")
 
 MONDAY_PATH = "/monday"
 MONDAY_CREATE_UPDATE = "create_update"
+
+# One path per calling Lambda rather than one path and a body field, so a
+# request that reaches the wrong handler is a 404-shaped mistake rather than a
+# text credited to the wrong service.
+SEND_PATHS = {"/ab": sources.AB, "/cl": sources.CL}
 
 # FIFO ids take alphanumerics and punctuation, up to 128 characters.
 FIFO_ID_MAX_CHARS = 128
@@ -98,6 +105,38 @@ def _handle_monday(payload):
     return response(200, {"ok": True})
 
 
+def _handle_send_request(payload, source):
+    """One text the AB or CL Lambda wants sent, on its way to the queue.
+
+    Answers 200 either way. The caller is a Lambda, not a person: a 4xx buys it
+    nothing it can act on, and a retry against a send endpoint is the one thing
+    worth not encouraging.
+
+    The phone is normalized here rather than past the queue because this is
+    where it can still be refused - it is also the group id, and an unnormalized
+    one would put two spellings of the same person in two groups that no longer
+    order against each other.
+    """
+    phone = normalize_phone_with_plus(payload.get("phone"))
+    message = (payload.get("message") or "").strip()
+    if not phone or not message:
+        logger.info("Ignoring %s send request with no %s", source,
+                    "usable phone" if not phone else "message")
+        return response(200, {"ok": True})
+
+    body = {
+        "phone": phone,
+        "message": message,
+        "monday_user_id": payload.get("monday_user_id"),
+    }
+    # The person is what has to stay ordered, the way the item is on the monday
+    # path. Deduplication is off for the same reason it is there: the callers
+    # send no idempotency token, so a repeated request is a repeated text.
+    _enqueue(body, _fifo_id(phone), str(uuid.uuid4()), source)
+
+    return response(200, {"ok": True})
+
+
 def lambda_handler(event, context):
     logger.info(event)
 
@@ -119,4 +158,6 @@ def lambda_handler(event, context):
 
     if path == MONDAY_PATH:
         return _handle_monday(body)
+    if path in SEND_PATHS:
+        return _handle_send_request(body, SEND_PATHS[path])
     return _handle_ring_central(body)
