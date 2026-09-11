@@ -3,7 +3,8 @@
 from datetime import datetime
 
 import ledger
-from config import JEFF_BOT_USER_ID, SELF_AUTHORED_UPDATE_MARKER, TEST_PHONE
+from config import (JEFF_BOT_USER_ID, MONDAY_USERS, SELF_AUTHORED_UPDATE_MARKER,
+                    TEST_PHONE)
 from logger_config import logger
 from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
@@ -19,6 +20,8 @@ OUTBOUND = "Outbound"
 # A message RingCentral never got out is not one to put in front of anybody as
 # though it had been sent.
 FAILED_STATUSES = ("SendingFailed", "DeliveryFailed")
+
+SMS_ENTRY_TYPE = "sms"
 
 
 def process_ring_central(event):
@@ -137,6 +140,15 @@ def record_sms(message):
         get_slash_controller().create_text_message(
             phone=phone, text=text, timestamp=timestamp, outbound=outbound,
             monday_user_id=JEFF_BOT_USER_ID if outbound else None)
+
+    if outbound:
+        sender = MONDAY_USERS[JEFF_BOT_USER_ID]['informal_name']
+        get_slash_controller().create_timeline_entry(
+            phone=phone,
+            entry=f"{internal_timestamp(timestamp)} - {sender} sent a text message",
+            entry_type=SMS_ENTRY_TYPE,
+            timestamp=timestamp,
+            outbound=True)
 
     # Fetched once, before the updates are written, so the body can say what the
     # updates actually carry rather than what the message claimed to have. Both
