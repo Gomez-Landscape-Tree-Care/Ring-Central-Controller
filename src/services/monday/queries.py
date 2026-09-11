@@ -124,3 +124,19 @@ def item_column_text(item_id: str, column_id: str) -> str:
             }}
         }}
     """
+
+
+def item_name(item_id: str) -> str:
+    """The name of one item - the person it stands for, as the board shows them.
+
+    The same root `items(ids:)` read item_column_text does, minus the
+    column_values filter: `name` is a field on the item itself rather than a
+    column, so nothing has to be named to get it.
+    """
+    return f"""
+        query {{
+            items(ids: [{json.dumps(str(item_id))}]) {{
+                name
+            }}
+        }}
+    """

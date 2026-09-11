@@ -142,6 +142,24 @@ class MondayController:
                            text, board.label, item_id)
         return phone
 
+    def item_name(self, board: Board, item_id: str) -> str | None:
+        """The name on one item - the person the board shows, not a column.
+
+        Swallows where item_phone raises, and the difference is what the answer
+        is for: a phone decides whether somebody gets texted, where a name only
+        decides how a timeline line reads. Every caller holds a fallback, so a
+        failed read costs a line that names the number instead of the person.
+
+        The board comes in only to name the failure - a name hangs off the item
+        alone, where a column has to be resolved against its board.
+        """
+        try:
+            return self.client.item_name(
+                item_id=item_id, op=f"Read {board.label} name on item {item_id}")
+        except Exception:
+            logger.exception("%s name lookup failed for item %s", board.label, item_id)
+            return None
+
     def create_update(self, board: Board, item_id: str, body: str) -> str | None:
         """Post `body` on one item's Updates section.
 

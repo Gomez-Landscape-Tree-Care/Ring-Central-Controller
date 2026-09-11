@@ -1,15 +1,16 @@
 """Route inbound RingCentral webhook notifications by event type."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 import ledger
-from config import (JEFF_BOT_USER_ID, MONDAY_USERS, SELF_AUTHORED_UPDATE_MARKER,
-                    TEST_PHONE)
+from config import (JEFF_BOT_USER_ID, MAIN_COMPANY_LINE, MONDAY_USERS,
+                    RING_USERS, SELF_AUTHORED_UPDATE_MARKER, TEST_PHONE)
 from logger_config import logger
 from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
 from services.slash.controller import get_controller as get_slash_controller
 from utils.date import internal_timestamp
+from utils.normalize import normalize_phone_with_plus
 from utils.timeline import render_timeline
 
 # An MMS carries its own body as a text/plain part, and can carry a vCard or a
@@ -23,6 +24,13 @@ OUTBOUND = "Outbound"
 FAILED_STATUSES = ("SendingFailed", "DeliveryFailed")
 
 SMS_ENTRY_TYPE = "sms"
+CALL_ENTRY_TYPE = "call"
+
+# The party statuses worth a timeline line. A call passes through Setup,
+# Proceeding, Answered, Disconnected and sometimes Hold or VoiceMail; these two
+# are the ones somebody reading a board wants to know about.
+PROCEEDING = "Proceeding"
+ANSWERED = "Answered"
 
 
 def process_ring_central(event):
@@ -307,10 +315,152 @@ def image_attachments(body) -> list[dict]:
 
 
 def process_telephony_session(event):
-    """One state change on a call: parse it, no fetch needed."""
+    """One state change on a call: put it on the boards if it is one worth a line.
+
+    No fetch needed - a telephony notification carries the whole state change,
+    where the outbound message-store one carries only ids. The writes are the
+    ones record_sms makes on its outbound branch, and for the same reason: Slash
+    is the record, and the Timeline column is rendered back out of it.
+
+    Nothing past the Slash entry is allowed to raise. This arrives over the FIFO
+    queue, so a raise is a redelivery, and the timeline route appends rather than
+    upserts - rebuild_timelines and the writes under it already swallow their
+    own failures, which is what keeps a failed column write from putting a second
+    copy of the line into Slash.
+    """
     session = extract_telephony_fields(event)
     logger.info("Received telephony session event %s", session)
+
+    party = company_line_party(session)
+    if not party:
+        logger.info("Session %s never touched the main line, ignoring",
+                    session['session_id'])
+        return None
+
+    outbound = party['outbound']
+    status = party['status']
+    if status not in (PROCEEDING, ANSWERED) or (outbound and status == ANSWERED):
+        logger.info("Nothing to record for a %s %s party on session %s",
+                    "outbound" if outbound else "inbound", status,
+                    session['session_id'])
+        return None
+
+    # The switch for whose calls are tracked at all: an extension with no row
+    # here is dropped rather than written onto a board as a raw id.
+    ring_user = RING_USERS.get(party['extension_id'])
+    if not ring_user:
+        logger.info("Extension %s is not tracked, ignoring session %s",
+                    party['extension_id'], session['session_id'])
+        return None
+
+    phone = party['phone']
+    if not phone:
+        logger.info("No usable other party on session %s", session['session_id'])
+        return None
+
+    # Ahead of the board search rather than left to the gates inside
+    # resolve_items and the Slash controller: those keep the writes from
+    # happening, where this keeps the reads from being paid for.
+    if phone != TEST_PHONE:
+        logger.info("%s is outside the rollout, leaving session %s off the boards",
+                    phone, session['session_id'])
+        return None
+
+    monday = get_monday_controller()
+    items = monday.resolve_items(phone)
+    entry = call_entry(party, ring_user, monday, items)
+
+    # Unstamped, as every entry Slash holds is: render_timeline stamps each line
+    # from the row's own timestamp.
+    get_slash_controller().create_timeline_entry(
+        phone=phone,
+        entry=entry,
+        entry_type=CALL_ENTRY_TYPE,
+        timestamp=event_time(session),
+        outbound=outbound)
+    rebuild_timelines(phone, items)
     return session
+
+
+def company_line_party(session):
+    """The party on this session with the main company line on one end, or None.
+
+    Direction is settled off which end the main line is on rather than off the
+    party's own `direction` field, and a session carrying it on neither end is
+    given back as None rather than guessed at - an extension-to-extension call
+    and an outbound call placed with an agent's direct DID both land there, and
+    neither is one this service has a person to write about.
+
+    The other party falls out of the same answer, since it is whichever end the
+    main line is not: the caller on an inbound call, the callee on an outbound
+    one.
+    """
+    for party in session['parties']:
+        from_phone = normalize_phone_with_plus(party['from'])
+        to_phone = normalize_phone_with_plus(party['to'])
+        if to_phone == MAIN_COMPANY_LINE:
+            outbound = False
+        elif from_phone == MAIN_COMPANY_LINE:
+            outbound = True
+        else:
+            continue
+        return {
+            **party,
+            'outbound': outbound,
+            'phone': from_phone if not outbound else to_phone,
+            'caller_name': party['from_name'],
+        }
+    return None
+
+
+def call_entry(party, ring_user, monday, items) -> str:
+    """The Timeline line for one call, in whichever direction it went.
+
+    Both directions name the other party off the board first: the item name is
+    the one somebody chose for this person, where RingCentral's caller id is
+    whatever the carrier handed over and is often missing or a company string.
+    Inbound falls back to that caller id, since a number with no item is exactly
+    the call the webhook's own name is worth having. Both then fall back to the
+    number - a line that names a phone still says who the call was with, where
+    "None is calling Vig" says nothing.
+    """
+    name = ring_user['name']
+    if not party['outbound']:
+        if party['status'] == ANSWERED:
+            return f"{name} answered"
+        caller = (board_name(monday, items) or party['caller_name']
+                  or party['phone'])
+        return f"{caller} is calling {name}"
+
+    return f"{name} is calling {board_name(monday, items) or party['phone']}"
+
+
+def board_name(monday, items) -> str | None:
+    """The name on the first item `phone` resolved to, or None if there is none.
+
+    Read off one board rather than every one: the items are the same person on
+    each, so a second read would answer the same name for another API call.
+    """
+    if not items:
+        return None
+    board, item_id = items[0]
+    return monday.item_name(board, item_id)
+
+
+def event_time(session) -> datetime:
+    """When RingCentral says the state changed, falling back to now.
+
+    Aware, always, for trigger_time's reason: this is what render_timeline prints
+    and what Slash orders the column by, and a naive stamp is read as the
+    Lambda's own clock - UTC deployed, Pacific on a laptop.
+    """
+    raw = session['event_time']
+    try:
+        return datetime.fromisoformat(raw)
+    except (TypeError, ValueError):
+        logger.warning("Session %s has no usable eventTime (%r)",
+                       session['session_id'], raw)
+        return datetime.now(timezone.utc)
 
 
 def extract_telephony_fields(event):
@@ -323,11 +473,13 @@ def extract_telephony_fields(event):
         'parties': [
             {
                 'id': party.get('id'),
-                'extension_id': party.get('extensionId'),
+                'extension_id': str(party.get('extensionId') or ''),
                 'direction': party.get('direction'),
                 'status': (party.get('status') or {}).get('code'),
                 'from': (party.get('from') or {}).get('phoneNumber'),
                 'to': (party.get('to') or {}).get('phoneNumber'),
+                'from_name': (party.get('from') or {}).get('name'),
+                'to_name': (party.get('to') or {}).get('name'),
             }
             for party in body.get('parties') or []
         ],

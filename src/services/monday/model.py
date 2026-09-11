@@ -236,3 +236,19 @@ class MondayModel:
             return None
         values = (items[0] or {}).get("column_values") or []
         return (values[0].get("text") or None) if values else None
+
+    def item_name(self, item_id: str, op: str = "") -> str | None:
+        """The name of one item, or None when there is no such item.
+
+        Raises on a missing `items` list for item_column_text's reason, and
+        answers None for an empty one: an item this token cannot see has no name
+        to give, which is not the same failure as monday not answering at all.
+        """
+        data = self.request(queries.item_name(item_id=str(item_id)), op=op)
+        items = data.get("items")
+        if items is None:
+            raise RuntimeError(
+                f"item {item_id} missing from response{f' [{op}]' if op else ''}: {data!r}")
+        if not items:
+            return None
+        return (items[0] or {}).get("name") or None
