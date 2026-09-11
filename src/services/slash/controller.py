@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 from config import TEST_PHONE
 from logger_config import logger
-from slash.model import SlashModel
+from services.slash.model import SlashModel
 
 
 @dataclass(frozen=True)

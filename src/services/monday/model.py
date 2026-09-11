@@ -4,6 +4,7 @@ import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from logger_config import logger
+from services.monday import queries
 
 from config import (
     JEFF_BOT_MONDAY_API_KEY,
@@ -127,3 +128,54 @@ class MondayModel:
                 f"monday.com returned a non-JSON body: {response.text[:500]}")
 
         return payload.get("data") or {}
+
+    @staticmethod
+    def _created_id(data: dict, field: str, op: str) -> str:
+        """The new item's id, or an error.
+
+        A create that comes back without an id is not a success worth passing on:
+        returning None here would let the caller go on to hang a subitem off
+        nothing, or report an applicant as written when they are not.
+
+        Monday's GraphQL ID comes back as a string, which is the one
+        representation of an item id this codebase uses - str() only in case that
+        ever changes.
+        """
+        item_id = ((data or {}).get(field) or {}).get("id")
+        if not item_id:
+            raise RuntimeError(f"{field} returned no id{f' [{op}]' if op else ''}: {data!r}")
+        return str(item_id)
+
+    def create_update(self, item_id: str, body: str, op: str = "") -> str:
+        """Post an update on an item's Updates section and return the update id.
+
+        Authored by whoever this client's token belongs to - Monday attributes an
+        update to the account that wrote it, which is why the caller may hand this
+        one a key other than Jeff Bot's.
+        """
+        data = self.request(
+            queries.create_update(item_id=str(item_id), body=body),
+            op=op,
+        )
+        return self._created_id(data, "create_update", op)
+
+    def find_item_id_by_phone(self, board_id: int, column_id: str, phone: str,
+                              op: str = "") -> str | None:
+        """The id of the first item on `board_id` matching `phone`, or None if there is none.
+
+        A response without a `boards` list is an error rather than a miss:
+        returning None there would answer "this number is not on the board" every
+        time Monday hiccups, and the caller uses that answer to decide whether to
+        write at all.
+        """
+        data = self.request(
+            queries.find_item_id_by_phone(
+                board_id=board_id, column_id=column_id, phone=phone),
+            op=op,
+        )
+        boards = data.get("boards")
+        if not boards or boards[0] is None:
+            raise RuntimeError(
+                f"board {board_id} missing from response{f' [{op}]' if op else ''}: {data!r}")
+        items = (boards[0].get("items_page") or {}).get("items") or []
+        return str(items[0]["id"]) if items else None

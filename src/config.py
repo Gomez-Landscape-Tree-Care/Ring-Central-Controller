@@ -65,6 +65,8 @@ MONDAY_USERS: dict[str, dict] = {
     },
 }
 
+SELF_AUTHORED_UPDATE_MARKER = '<span></span>'
+
 LOCAL_TESTING = "AWS_LAMBDA_FUNCTION_NAME" not in os.environ
 
 if LOCAL_TESTING:

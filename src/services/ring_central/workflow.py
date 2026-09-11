@@ -1,7 +1,13 @@
 """Route inbound RingCentral webhook notifications by event type."""
 
+from datetime import datetime
+
+from config import SELF_AUTHORED_UPDATE_MARKER
 from logger_config import logger
+from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
+from services.slash.controller import get_controller as get_slash_controller
+from utils.date import internal_timestamp
 
 
 def process_ring_central(event):
@@ -45,9 +51,25 @@ def extract_new_message_ids(body):
 
 
 def process_instant_message(event):
-    """A single new SMS delivered in full: parse it, no fetch needed."""
+    """A single new inbound SMS delivered in full: keep it in Slash and on the board."""
     message = extract_sms_fields(event)
     logger.info("Received instant SMS message %s", message)
+
+    text = message['text']
+    if not text:
+        logger.info("Instant SMS %s carries no text, nothing to record", message['id'])
+        return message
+
+    phone = message['from']
+    timestamp = datetime.fromisoformat(message['creation_time'])
+
+    get_slash_controller().create_text_message(
+        phone=phone, text=text, timestamp=timestamp, outbound=False)
+
+    lines = text.replace("\n", "<br>")
+    body = (f"{SELF_AUTHORED_UPDATE_MARKER}INBOUND SMS · {internal_timestamp(timestamp)}"
+            f"<br>{lines}")
+    get_monday_controller().create_update_to_cl(phone=phone, body=body)
     return message
 
 
