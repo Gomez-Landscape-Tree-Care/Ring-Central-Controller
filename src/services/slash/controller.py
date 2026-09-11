@@ -86,11 +86,13 @@ class SlashController:
     def timeline_entries(self, phone: str) -> list[SlashTimelineEntry]:
         """Every entry Slash holds for this applicant, newest first.
 
-        Sorted here rather than trusted off the wire: timeline_column stops at
-        the first line that overruns TIMELINE_MAX, so an out-of-order read does
-        not fail, it silently drops the wrong entries. One workflow run can land
-        several entries in the same second, which is why this is the only
-        ordering either surface gets.
+        The order comes off the wire and is not re-sorted here, which is the
+        stronger guarantee rather than the lazier one: the backend orders by
+        timestamp then id, both descending, and one workflow run can land
+        several entries in the same second - a sort on timestamp alone would
+        throw that tiebreak away. Order is load-bearing because render_timeline
+        stops at the first line that overruns the column cap, so an out-of-order
+        read does not fail, it silently drops the wrong entries.
         """
         entries = [SlashTimelineEntry.from_api(e)
                    for e in self._model.timeline_entries(phone=phone)]

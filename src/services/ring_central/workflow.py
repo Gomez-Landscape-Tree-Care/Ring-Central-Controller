@@ -10,6 +10,7 @@ from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
 from services.slash.controller import get_controller as get_slash_controller
 from utils.date import internal_timestamp
+from utils.timeline import render_timeline
 
 # An MMS carries its own body as a text/plain part, and can carry a vCard or a
 # voice clip next to the photos. Only the images are worth putting on a board.
@@ -136,6 +137,12 @@ def record_sms(message):
     outbound = message['outbound']
     timestamp = datetime.fromisoformat(message['creation_time'])
 
+    # Up front, once: the updates below and the Timeline column rebuild write to
+    # the same two items, and resolve_items is the board search both would
+    # otherwise pay for separately.
+    monday = get_monday_controller()
+    items = monday.resolve_items(phone)
+
     if text:
         get_slash_controller().create_text_message(
             phone=phone, text=text, timestamp=timestamp, outbound=outbound,
@@ -143,12 +150,16 @@ def record_sms(message):
 
     if outbound:
         sender = MONDAY_USERS[JEFF_BOT_USER_ID]['informal_name']
+        # Unstamped, as every entry Slash holds is: render_timeline stamps each
+        # line from the row's own timestamp, so a stamp in the text itself would
+        # come back doubled on the rebuild below.
         get_slash_controller().create_timeline_entry(
             phone=phone,
-            entry=f"{internal_timestamp(timestamp)} - {sender} sent a text message",
+            entry=f"{sender} sent a text message",
             entry_type=SMS_ENTRY_TYPE,
             timestamp=timestamp,
             outbound=True)
+        rebuild_timelines(phone, items)
 
     # Fetched once, before the updates are written, so the body can say what the
     # updates actually carry rather than what the message claimed to have. Both
@@ -157,15 +168,54 @@ def record_sms(message):
     photos = RingCentralController().download_attachments(attachments)
     body = update_body(text, timestamp, outbound)
 
-    monday = get_monday_controller()
-    update_ids = (monday.create_update_to_cl(phone=phone, body=body),
-                  monday.create_update_to_ab(phone=phone, body=body))
+    update_ids = [monday.create_update(board, item_id, body)
+                  for board, item_id in items]
     for photo in photos:
         for update_id in update_ids:
             monday.add_photo_to_update(
                 update_id=update_id, filename=photo.filename,
                 content=photo.content, content_type=photo.content_type)
     return message
+
+
+def rebuild_timelines(phone, items) -> None:
+    """Re-render the Timeline column on each of `items` from what Slash holds.
+
+    Read back rather than appended to: Slash is the record this service and both
+    board automations write to, so rebuilding is what puts the other two's
+    entries on a column this one is touching, and what lets entries drop off the
+    old end once the column runs past its cap. The entry for this very message
+    was written a moment ago, so it comes back in the read.
+
+    Fails closed. A read that raises and a person Slash has no entries for both
+    write nothing: a rebuild replaces the whole column, so rendering an empty
+    one over a real history is worse than leaving it a line stale - and since
+    every caller records its entry first, no entries means something is wrong
+    rather than that there is nothing to say.
+
+    The read is swallowed where create_timeline_entry above it is not. By the
+    time this runs the entry is safely in Slash and the boards are only behind,
+    so a raise would buy a retry that appends a second copy of everything
+    record_sms has already written.
+    """
+    if not items:
+        return None
+
+    try:
+        entries = get_slash_controller().timeline_entries(phone)
+    except Exception:
+        logger.exception("Timeline read failed for %s, columns left alone", phone)
+        return None
+
+    if not entries:
+        logger.warning("Slash holds no timeline entries for %s, columns left alone", phone)
+        return None
+
+    column = render_timeline([(entry.entry, entry.timestamp) for entry in entries])
+    monday = get_monday_controller()
+    for board, item_id in items:
+        monday.write_timeline(board, item_id, column)
+    return None
 
 
 def update_body(text, timestamp, outbound) -> str:

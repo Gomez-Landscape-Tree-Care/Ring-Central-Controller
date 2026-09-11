@@ -177,6 +177,22 @@ class MondayModel:
         )
         return self._created_id(data, "add_file_to_update", op)
 
+    def write_long_text_column(self, board_id: int, item_id: str, column_id: str,
+                               text: str, op: str = "") -> str:
+        """Overwrite one long_text column and return the item's id.
+
+        A replace rather than an append: the caller hands over the column's whole
+        new text, which is what lets a rebuild drop entries off the old end as
+        well as add one to the new.
+        """
+        data = self.request(
+            queries.write_long_text_column(
+                board_id=board_id, item_id=str(item_id),
+                column_id=str(column_id), text=text),
+            op=op,
+        )
+        return self._created_id(data, "change_column_value", op)
+
     def find_item_id_by_phone(self, board_id: int, column_id: str, phone: str,
                               op: str = "") -> str | None:
         """The id of the first item on `board_id` matching `phone`, or None if there is none.

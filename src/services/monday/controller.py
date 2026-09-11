@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from functools import lru_cache
 
 from config import AB_BOARD_ID, CL_BOARD_ID, TEST_PHONE
@@ -7,56 +8,131 @@ from services.monday.model import MondayModel
 from utils.normalize import normalize_phone
 
 
+@dataclass(frozen=True)
+class Board:
+    """One board, and the columns this service reads a person off or writes to.
+
+    The board id rides along with the column ids because change_column_value
+    resolves a column against its board, where an update hangs off the item
+    alone - so a caller holding an item id still cannot write a column without
+    knowing which board it came from.
+    """
+
+    id: int
+    phone_column: str
+    timeline_column: str
+    label: str
+
+
+CL = Board(id=CL_BOARD_ID, phone_column=CLColIds.phone,
+           timeline_column=CLColIds.timeline, label="Clients & Leads")
+AB = Board(id=AB_BOARD_ID, phone_column=ABColIds.phone,
+           timeline_column=ABColIds.timeline, label="Applicants Board")
+
+# Both boards carry the same person, so every write this service makes goes to
+# whichever of them has them. Order is the order the writes land in.
+BOARDS = (CL, AB)
+
+
 class MondayController:
     """Controller to handle business logic for all Monday operations"""
 
     def __init__(self, client: MondayModel = MondayModel()):
         self.client = client
 
-    def _create_update_to_board(self, phone: str, body: str, board_id: int,
-                                column_id: str, label: str) -> str | None:
-        """Updates in Monday represent text messages for this automation.
+    def _find_item_id(self, board: Board, match_key: str) -> str | None:
+        """The id of `board`'s item for an already-normalized phone, or None.
 
-        Answers the new update's id so a caller can hang a photo off it, and None
-        for every way this gives up - outside the rollout, an unusable phone, a
-        failed lookup, no item, a failed write. Those are not five outcomes a
-        caller can act on differently: None means there is nothing on the board
-        to attach to.
+        None covers both ways this gives up, a failed lookup and no such item.
+        Those are not two outcomes a caller can act on differently: either way
+        there is nothing on that board to write to.
         """
-        if phone != TEST_PHONE:
-            return None
-
-        match_key = normalize_phone(phone)
-        if not match_key:
-            logger.info("Unusable phone %s, skipping %s update", phone, label)
-            return None
-
         try:
             item_id = self.client.find_item_id_by_phone(
-                board_id=board_id, column_id=column_id, phone=match_key,
-                op=f"Find {label} item for {phone}")
+                board_id=board.id, column_id=board.phone_column, phone=match_key,
+                op=f"Find {board.label} item for {match_key}")
         except Exception:
-            logger.exception("%s lookup failed for %s", label, phone)
+            logger.exception("%s lookup failed for %s", board.label, match_key)
             return None
 
         if not item_id:
-            logger.info("No %s item for %s", label, phone)
-            return None
+            logger.info("No %s item for %s", board.label, match_key)
+        return item_id
 
+    def resolve_items(self, phone: str) -> list[tuple[Board, str]]:
+        """Every board holding an item for `phone`, paired with that item's id.
+
+        The one board search a message pays for, resolved up front and handed
+        back rather than repeated per write: an SMS posts an update and rebuilds
+        the Timeline column on the same item, and finding it twice doubles what
+        each message costs against monday's complexity budget.
+
+        The rollout gate lives here rather than at the writes below, because
+        every one of them needs an item id and this is where item ids come from.
+        A phone outside the rollout resolves to no boards, which leaves the
+        callers nothing to write to and nothing to guard.
+        """
+        if phone != TEST_PHONE:
+            return []
+
+        match_key = normalize_phone(phone)
+        if not match_key:
+            logger.info("Unusable phone %s, skipping board lookups", phone)
+            return []
+
+        items = []
+        for board in BOARDS:
+            item_id = self._find_item_id(board, match_key)
+            if item_id:
+                items.append((board, item_id))
+        return items
+
+    def create_update(self, board: Board, item_id: str, body: str) -> str | None:
+        """Post `body` on one item's Updates section.
+
+        Updates in Monday represent text messages for this automation. Answers
+        the new update's id so a caller can hang a photo off it, and None when
+        the write fails, which means there is nothing to attach to.
+        """
         try:
             return self.client.create_update(
-                item_id=item_id, body=body, op=f"Update {label} item {item_id}")
+                item_id=item_id, body=body,
+                op=f"Update {board.label} item {item_id}")
         except Exception:
-            logger.exception("%s update failed for %s", label, phone)
+            logger.exception("%s update failed for item %s", board.label, item_id)
+        return None
+
+    def write_timeline(self, board: Board, item_id: str, text: str) -> None:
+        """Overwrite one item's Timeline column with `text`.
+
+        A replace rather than a prepend: the caller renders the whole column
+        from Slash, which is the record this service and both board automations
+        share, so a rebuild also picks up whatever the other two have written
+        since this one last looked.
+
+        Swallowed like add_photo_to_update below and for the same reason - this
+        runs after the Slash entry and the board updates have landed, and the
+        instant message webhook has no queue behind it, so a raise is a 5xx
+        RingCentral retries into a duplicate text and duplicate updates.
+        """
+        try:
+            self.client.write_long_text_column(
+                board_id=board.id, item_id=item_id,
+                column_id=board.timeline_column, text=text,
+                op=f"Rebuild {board.label} timeline on item {item_id}")
+        except Exception:
+            logger.exception("%s timeline column failed for item %s",
+                             board.label, item_id)
         return None
 
     def add_photo_to_update(self, update_id: str | None, filename: str,
                             content: bytes, content_type: str) -> None:
         """Hang one photo off an update already posted, if there is one.
 
-        A falsy update_id is the ordinary case rather than an error: the board
-        write answers None for a phone outside the rollout and for a person with
-        no item, and both mean there is nothing to attach to.
+        A falsy update_id is the ordinary case rather than an error: create_update
+        answers None for a write that failed, and a person outside the rollout or
+        with no item on the board never gets that far, because resolve_items
+        hands their caller no item to post on in the first place.
 
         Swallowed like the update write above, and for a sharper reason - the
         instant message webhook posts straight to the controller with no queue
@@ -78,18 +154,6 @@ class MondayController:
         except Exception:
             logger.exception("Attaching %s to update %s failed", filename, update_id)
         return None
-
-    def create_update_to_cl(self, phone: str, body: str) -> str | None:
-        """Post `body` on the Clients & Leads item for `phone`, if that person has one."""
-        return self._create_update_to_board(
-            phone=phone, body=body, board_id=CL_BOARD_ID,
-            column_id=CLColIds.phone, label="Clients & Leads")
-
-    def create_update_to_ab(self, phone: str, body: str) -> str | None:
-        """Post `body` on the Applicants Board item for `phone`, if that person has one."""
-        return self._create_update_to_board(
-            phone=phone, body=body, board_id=AB_BOARD_ID,
-            column_id=ABColIds.phone, label="Applicants Board")
 
 
 @lru_cache(maxsize=1)

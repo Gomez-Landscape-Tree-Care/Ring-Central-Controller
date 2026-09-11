@@ -73,3 +73,28 @@ def add_file_to_update(update_id: str) -> str:
             }}
         }}
     """
+
+
+def write_long_text_column(board_id: int, item_id: str, column_id: str, text: str) -> str:
+    """Overwrite one long_text column with `text`, replacing whatever it held.
+
+    `value` is a JSON! rather than the String! `body` is, so it takes the double
+    encode create_update's body does not: once to build the {"text": ...} the
+    column type wants, again to land that object as a GraphQL string literal.
+
+    The board id is required here and nowhere else in this file - monday resolves
+    a column against its board, where an update hangs off the item alone.
+    """
+    value = json.dumps({"text": text})
+    return f"""
+        mutation {{
+            change_column_value(
+                board_id: {json.dumps(str(board_id))},
+                item_id: {json.dumps(str(item_id))},
+                column_id: {json.dumps(str(column_id))},
+                value: {json.dumps(value)}
+            ) {{
+                id
+            }}
+        }}
+    """
