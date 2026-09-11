@@ -79,7 +79,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: ring-central-controller-receiver
-      Description: Public webhook receiver — enqueues telephony notifications
+      Description: Public webhook receiver — enqueues telephony and monday notifications
       Handler: receiver.lambda_handler
       Timeout: 30
       LoggingConfig:
@@ -99,8 +99,10 @@ Resources:
       LogGroupName: /aws/lambda/ring-central-controller-receiver
       RetentionInDays: 30
 
-  # Ordered per call, deduplicated per call state. The receiver always supplies
-  # both ids, so content based deduplication stays off.
+  # Ordered per call for Ring Central and per item for monday. Ring Central
+  # deduplicates per call state; monday has no natural dedup key, so the receiver
+  # sends a random one. Both producers always supply both ids, so content based
+  # deduplication stays off.
   RingCentralEventQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -130,10 +132,12 @@ Outputs:
     Description: ARN of the controller function
     Value: !GetAtt RingCentralControllerFunction.Arn
   ReceiverFunctionUrl:
-    Description: Public HTTPS endpoint for the telephony sessions webhook subscription
+    Description: >-
+      Public HTTPS endpoint for the telephony sessions webhook subscription;
+      monday webhooks subscribe to the same URL with a /monday path
     Value: !GetAtt RingCentralReceiverFunctionUrl.FunctionUrl
   EventQueueUrl:
-    Description: FIFO queue carrying telephony notifications to the controller
+    Description: FIFO queue carrying telephony and monday notifications to the controller
     Value: !Ref RingCentralEventQueue
   EventDLQUrl:
     Description: Dead letter queue for telephony notifications that exhausted their retries

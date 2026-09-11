@@ -7,8 +7,10 @@ Board) Lambdas directly over a Function URL.
 
 import json
 
+import sources
 from utils.http_utils import get_body, response
 from logger_config import logger
+from services.monday.workflow import process_monday
 from services.ring_central.workflow import process_ring_central
 
 
@@ -19,7 +21,14 @@ def _process_queue_records(records):
     the dead letter queue once it runs out of receives.
     """
     for record in records:
-        process_ring_central(json.loads(record["body"]))
+        attributes = record.get("messageAttributes") or {}
+        source = (attributes.get("source") or {}).get("stringValue")
+        body = json.loads(record["body"])
+        # Messages enqueued before the source attribute existed are Ring Central.
+        if source == sources.MONDAY:
+            process_monday(body)
+        else:
+            process_ring_central(body)
 
 
 def lambda_handler(event, context):
