@@ -57,9 +57,12 @@ Resources:
           JAIME_MONDAY_API_KEY: !Ref JaimeMondayApiKey
           VIG_MONDAY_API_KEY: !Ref VigMondayApiKey
           ANDERSON_MONDAY_API_KEY: !Ref AndersonMondayApiKey
+          PROCESSED_MESSAGES_TABLE: !Ref ProcessedMessagesTable
       Policies:
         - SSMParameterReadPolicy:
             ParameterName: ring-central-controller/*
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProcessedMessagesTable
       Events:
         RingCentralEvents:
           Type: SQS
@@ -124,6 +127,28 @@ Resources:
       FifoQueue: true
       MessageRetentionPeriod: 1209600
 
+  # Every RingCentral message id the controller has already recorded. A message
+  # we sent ourselves comes straight back on the Outbound message-store webhook,
+  # where nothing distinguishes it from one an agent typed in the RingCentral
+  # app; the id registered at send time is the whole difference. Entries expire
+  # after a day, which is well past RingCentral's own redelivery window.
+  ProcessedMessagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: ring-central-controller-processed-messages
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: message_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: message_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+
 Outputs:
   FunctionUrl:
     Description: Public HTTPS endpoint for the message-store webhook subscriptions
@@ -142,3 +167,6 @@ Outputs:
   EventDLQUrl:
     Description: Dead letter queue for telephony notifications that exhausted their retries
     Value: !Ref RingCentralEventDLQ
+  ProcessedMessagesTableName:
+    Description: Ledger of RingCentral message ids the controller has already recorded
+    Value: !Ref ProcessedMessagesTable

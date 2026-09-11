@@ -1,3 +1,4 @@
+import ledger
 from logger_config import logger
 from services.ring_central import model as RingCentralModel
 
@@ -5,6 +6,32 @@ class RingCentralController:
     def __init__(self, language: str | None = 'Spanish', client = RingCentralModel.get_model()):
         self.language: str | None = language
         self.client = client
+
+    def send_sms(self, text: str, to_number: str, op: str = "") -> str:
+        """Send one SMS and register that we are the ones who sent it.
+
+        The only send entry point automation should use. RingCentral echoes
+        every outbound message back on the message-store webhook, where nothing
+        tells it apart from one an agent typed in the RingCentral app - the
+        ledger claim taken here is the entire difference, so a send that went
+        round this wrapper would mirror itself onto both boards a second later.
+
+        The claim is the next statement after the send for a reason: the send
+        only beats the webhook back while nothing sits between them, and a Slash
+        or monday write in the gap would make it a race.
+
+        A failed claim is logged rather than raised, against the rule the rest of
+        this module follows: the text is already on the wire by the time it runs,
+        and a caller reading the exception as a failed send would send it twice.
+        A message mirrored twice on a board costs less than one delivered twice
+        to a person.
+        """
+        message_id = self.client.send_sms(text=text, to_number=to_number, op=op)
+        try:
+            ledger.claim(message_id)
+        except Exception:
+            logger.exception("Could not claim sent message %s", message_id)
+        return message_id
 
     def get_messages(self, extension_id, message_ids: list, op: str = "") -> list:
         """Fetch the message-store records for the given ids, one request each.
