@@ -1,8 +1,8 @@
 from functools import lru_cache
 
-from config import CL_BOARD_ID, TEST_PHONE
+from config import AB_BOARD_ID, CL_BOARD_ID, TEST_PHONE
 from logger_config import logger
-from services.monday.column_ids import CLColIds
+from services.monday.column_ids import ABColIds, CLColIds
 from services.monday.model import MondayModel
 from utils.normalize import normalize_phone
 
@@ -13,50 +13,47 @@ class MondayController:
     def __init__(self, client: MondayModel = MondayModel()):
         self.client = client
 
-    def create_update_to_cl(self, phone: str, body: str) -> None:
-        """Post `body` on the Clients & Leads item for `phone`, if that person has one.
-
-        Everything is swallowed, unlike the Slash writes that run before it.
-        Those append rather than upsert, so letting a Monday failure raise would
-        DLQ the notification and each of the three redeliveries would leave
-        another copy of the same text on the person's Slash record. A missed
-        update is a line in CloudWatch; a raise is duplicated data.
-
-        An inbound SMS from a number nobody has ever put on the board is
-        ordinary, not an error - there is simply no Updates section to write to.
-
-        The gate compares the `+1XXXXXXXXXX` RingCentral hands over, as
-        SlashController's does, so both services go live for the same number at
-        the same moment. normalize_phone runs only at the query boundary, where
-        Monday's bare `1XXXXXXXXXX` match key is needed.
-        """
+    def _create_update_to_board(self, phone: str, body: str, board_id: int,
+                                column_id: str, label: str) -> None:
+        """Updates in Monday represent text messages for this automation."""
         if phone != TEST_PHONE:
             return None
 
         match_key = normalize_phone(phone)
         if not match_key:
-            logger.info("Unusable phone %s, skipping Clients & Leads update", phone)
+            logger.info("Unusable phone %s, skipping %s update", phone, label)
             return None
 
         try:
             item_id = self.client.find_item_id_by_phone(
-                board_id=CL_BOARD_ID, column_id=CLColIds.phone, phone=match_key,
-                op=f"Find Clients & Leads item for {phone}")
+                board_id=board_id, column_id=column_id, phone=match_key,
+                op=f"Find {label} item for {phone}")
         except Exception:
-            logger.exception("Clients & Leads lookup failed for %s", phone)
+            logger.exception("%s lookup failed for %s", label, phone)
             return None
 
         if not item_id:
-            logger.info("No Clients & Leads item for %s", phone)
+            logger.info("No %s item for %s", label, phone)
             return None
 
         try:
             self.client.create_update(
-                item_id=item_id, body=body,
-                op=f"Update Clients & Leads item {item_id}")
+                item_id=item_id, body=body, op=f"Update {label} item {item_id}")
         except Exception:
-            logger.exception("Clients & Leads update failed for %s", phone)
+            logger.exception("%s update failed for %s", label, phone)
         return None
+
+    def create_update_to_cl(self, phone: str, body: str) -> None:
+        """Post `body` on the Clients & Leads item for `phone`, if that person has one."""
+        self._create_update_to_board(
+            phone=phone, body=body, board_id=CL_BOARD_ID,
+            column_id=CLColIds.phone, label="Clients & Leads")
+
+    def create_update_to_ab(self, phone: str, body: str) -> None:
+        """Post `body` on the Applicants Board item for `phone`, if that person has one."""
+        self._create_update_to_board(
+            phone=phone, body=body, board_id=AB_BOARD_ID,
+            column_id=ABColIds.phone, label="Applicants Board")
 
 
 @lru_cache(maxsize=1)

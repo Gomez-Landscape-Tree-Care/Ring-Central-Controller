@@ -51,7 +51,7 @@ def extract_new_message_ids(body):
 
 
 def process_instant_message(event):
-    """A single new inbound SMS delivered in full: keep it in Slash and on the board."""
+    """A single new inbound SMS delivered in full: keep it in Slash and on the boards."""
     message = extract_sms_fields(event)
     logger.info("Received instant SMS message %s", message)
 
@@ -69,7 +69,9 @@ def process_instant_message(event):
     lines = text.replace("\n", "<br>")
     body = (f"{SELF_AUTHORED_UPDATE_MARKER}INBOUND SMS · {internal_timestamp(timestamp)}"
             f"<br>{lines}")
-    get_monday_controller().create_update_to_cl(phone=phone, body=body)
+    monday = get_monday_controller()
+    monday.create_update_to_cl(phone=phone, body=body)
+    monday.create_update_to_ab(phone=phone, body=body)
     return message
 
 
