@@ -213,3 +213,26 @@ class MondayModel:
                 f"board {board_id} missing from response{f' [{op}]' if op else ''}: {data!r}")
         items = (boards[0].get("items_page") or {}).get("items") or []
         return str(items[0]["id"]) if items else None
+
+    def item_column_text(self, item_id: str, column_id: str,
+                         op: str = "") -> str | None:
+        """The text of one column on one item, or None when there is nothing in it.
+
+        A response without an `items` list is an error rather than an empty
+        column, for find_item_id_by_phone's reason: the caller decides off this
+        answer whether a person gets texted, so a monday hiccup must not read as
+        "this item has nothing in that column". An empty list is not an error - a
+        deleted item, or one this token cannot see, has no text to give.
+        """
+        data = self.request(
+            queries.item_column_text(item_id=str(item_id), column_id=str(column_id)),
+            op=op,
+        )
+        items = data.get("items")
+        if items is None:
+            raise RuntimeError(
+                f"item {item_id} missing from response{f' [{op}]' if op else ''}: {data!r}")
+        if not items:
+            return None
+        values = (items[0] or {}).get("column_values") or []
+        return (values[0].get("text") or None) if values else None

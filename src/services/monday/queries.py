@@ -98,3 +98,29 @@ def write_long_text_column(board_id: int, item_id: str, column_id: str, text: st
             }}
         }}
     """
+
+
+def item_column_text(item_id: str, column_id: str) -> str:
+    """The text of one column on one item.
+
+    The lookup find_item_id_by_phone cannot serve: that one searches a board for a
+    phone, where the create_update webhook arrives naming an item and needing the
+    person behind it. A root `items(ids:)` read rather than a board search,
+    because the id is already known - searching for it would spend complexity
+    finding what was handed over.
+
+    `column_values(ids:)` is filtered rather than read whole: an item on either
+    board carries dozens of columns, and the response is the only thing this pays
+    for. Both ids are quoted scalars, so each takes the single json.dumps
+    create_update's item_id takes, not the double encode
+    write_long_text_column's value takes.
+    """
+    return f"""
+        query {{
+            items(ids: [{json.dumps(str(item_id))}]) {{
+                column_values(ids: [{json.dumps(str(column_id))}]) {{
+                    text
+                }}
+            }}
+        }}
+    """

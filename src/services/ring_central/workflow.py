@@ -148,19 +148,6 @@ def record_sms(message):
             phone=phone, text=text, timestamp=timestamp, outbound=outbound,
             monday_user_id=JEFF_BOT_USER_ID if outbound else None)
 
-    if outbound:
-        sender = MONDAY_USERS[JEFF_BOT_USER_ID]['informal_name']
-        # Unstamped, as every entry Slash holds is: render_timeline stamps each
-        # line from the row's own timestamp, so a stamp in the text itself would
-        # come back doubled on the rebuild below.
-        get_slash_controller().create_timeline_entry(
-            phone=phone,
-            entry=f"{sender} sent a text message",
-            entry_type=SMS_ENTRY_TYPE,
-            timestamp=timestamp,
-            outbound=True)
-        rebuild_timelines(phone, items)
-
     # Fetched once, before the updates are written, so the body can say what the
     # updates actually carry rather than what the message claimed to have. Both
     # boards get the same bytes - downloading per board would fetch each photo
@@ -175,6 +162,19 @@ def record_sms(message):
             monday.add_photo_to_update(
                 update_id=update_id, filename=photo.filename,
                 content=photo.content, content_type=photo.content_type)
+
+    if outbound:
+        sender = MONDAY_USERS[JEFF_BOT_USER_ID]['informal_name']
+        # Unstamped, as every entry Slash holds is: render_timeline stamps each
+        # line from the row's own timestamp, so a stamp in the text itself would
+        # come back doubled on the rebuild below.
+        get_slash_controller().create_timeline_entry(
+            phone=phone,
+            entry=f"{sender} sent a text message",
+            entry_type=SMS_ENTRY_TYPE,
+            timestamp=timestamp,
+            outbound=True)
+        rebuild_timelines(phone, items)
     return message
 
 
