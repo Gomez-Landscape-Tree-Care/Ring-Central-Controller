@@ -159,6 +159,24 @@ class MondayModel:
         )
         return self._created_id(data, "create_update", op)
 
+    def add_file_to_update(self, update_id: str, filename: str, content: bytes,
+                           content_type: str, op: str = "") -> str:
+        """Attach one file to an existing update and return the new asset's id.
+
+        The files dict is keyed "image" because _execute's map is - see
+        queries.add_file_to_update for why both ends are pinned. The three-tuple
+        is requests' own form for a part with an explicit filename and content
+        type; handing it bare bytes sends the part unnamed and monday stores an
+        asset called "image" with no extension, which it then renders as a
+        generic file rather than a thumbnail.
+        """
+        data = self.request(
+            queries.add_file_to_update(update_id=str(update_id)),
+            op=op,
+            files={"image": (filename, content, content_type)},
+        )
+        return self._created_id(data, "add_file_to_update", op)
+
     def find_item_id_by_phone(self, board_id: int, column_id: str, phone: str,
                               op: str = "") -> str | None:
         """The id of the first item on `board_id` matching `phone`, or None if there is none.

@@ -49,3 +49,27 @@ def find_item_id_by_phone(board_id: int, column_id: str, phone: str) -> str:
             }}
         }}
     """
+
+
+def add_file_to_update(update_id: str) -> str:
+    """Hang one file off an update that has already been posted.
+
+    The bytes are not in this string: they travel as a separate form part, and
+    `$file` is the placeholder MondayModel._execute's `map` points that part at.
+    That map is hardcoded {"image": "variables.file"}, so the variable here has
+    to be named `file` and the caller's files dict has to be keyed "image" -
+    rename either side and monday answers "Variable $file is not defined".
+
+    `update_id` is an ID!, which monday takes as a quoted string, so it gets the
+    single json.dumps create_update's item_id gets.
+    """
+    return f"""
+        mutation ($file: File!) {{
+            add_file_to_update(
+                update_id: {json.dumps(str(update_id))},
+                file: $file
+            ) {{
+                id
+            }}
+        }}
+    """

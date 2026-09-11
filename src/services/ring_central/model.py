@@ -1,3 +1,6 @@
+import mimetypes
+import os
+from dataclasses import dataclass
 from functools import lru_cache
 
 from ringcentral import SDK
@@ -19,6 +22,11 @@ MAX_RETRY_AFTER = 90
 
 # RingCentral rejects an SMS body longer than this.
 MAX_SMS_CHARS = 1000
+
+# RingCentral caps one MMS attachment near 1.5 MB, so this sits well clear of a
+# real photo. It is here to stop a record that misreports its own size, not to be
+# a budget - a 512 MB Lambda does not notice ten of these.
+MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024
 
 def _response(exception: ApiException):
     """The requests.Response behind an ApiException, or None.
@@ -56,6 +64,44 @@ def _is_retryable(exception: BaseException) -> bool:
 
 
 _backoff = wait_exponential(multiplier=8, exp_base=8)
+
+
+@dataclass(frozen=True)
+class Attachment:
+    """One downloaded message-store attachment, in the three fields an upload needs."""
+
+    filename: str
+    content: bytes
+    content_type: str
+
+
+def _media_type(response) -> str:
+    """The bare media type off a response, without the charset parameter."""
+    header = (getattr(response, "headers", None) or {}).get("Content-Type") or ""
+    return header.split(";")[0].strip() or "application/octet-stream"
+
+
+def _attachment_name(uri: str, content_type: str, hint: str = "") -> str:
+    """A filename for downloaded bytes, preferring the one RingCentral gave.
+
+    basename() because the hint is whatever the sending handset put in the MMS
+    part and monday takes it verbatim. The fallback keeps the attachment id off
+    the end of the uri so two photos on one message cannot collide, and always
+    carries an extension - monday decides whether to render a thumbnail from the
+    name, so a bare id shows up as a generic file.
+
+    The subtype is the fallback for the extension because mimetypes does not
+    know every media type a handset sends: image/heic answers None there and
+    would otherwise be stored as .bin.
+    """
+    if hint:
+        return os.path.basename(hint)
+
+    suffix = mimetypes.guess_extension(content_type)
+    if not suffix:
+        subtype = content_type.rsplit("/", 1)[-1]
+        suffix = f".{subtype}" if subtype.isalnum() else ".bin"
+    return f"mms-{uri.split('?')[0].rstrip('/').rsplit('/', 1)[-1]}{suffix}"
 
 
 def _wait_rc(retry_state):
@@ -134,21 +180,88 @@ class RingCentralModel:
                 response = platform.post(path, body=body)
                 return response.json_dict()
         except ApiException as e:
-            status = _status(e)
-            if status == 401:
-                # The access token died before its stated expiry - revoked, or
-                # the app's credentials changed. Clearing it sends the retry
-                # back through login rather than replaying a dead token, which
-                # is what makes 401 worth retrying where other 4xx are not.
-                platform.auth().reset()
-            inner = _response(e)
-            # Logged here because the exception message alone is not enough:
-            # RingCentral's errorCode in the body is what identifies the failure.
-            logger.critical(
-                f"HTTP {status}: {getattr(inner, 'text', '')[:500]}")
+            self._note_api_failure(platform, e)
             raise
 
         return {}
+
+    @staticmethod
+    def _note_api_failure(platform, exception: ApiException) -> None:
+        """Log what RingCentral actually said, and drop a token it has stopped honouring.
+
+        The access token dying before its stated expiry - revoked, or the app's
+        credentials changed - is what makes 401 worth retrying where other 4xx
+        are not: clearing it sends the retry back through login rather than
+        replaying a dead token. Shared with _download rather than written twice
+        because a download that skipped the reset would replay the same dead
+        token through all three attempts.
+
+        The body is logged because the exception message alone is not enough -
+        RingCentral's errorCode in the body is what identifies the failure.
+        """
+        status = _status(exception)
+        if status == 401:
+            platform.auth().reset()
+        inner = _response(exception)
+        logger.critical(f"HTTP {status}: {getattr(inner, 'text', '')[:500]}")
+
+    def download(self, uri: str, filename: str = "", op: str = "") -> Attachment:
+        """Fetch one attachment's bytes and the type RingCentral served them as.
+
+        Separate from `request` because `_execute` answers `json_dict()`, which
+        raises 'Response is not JSON' on an image. Login, retry and the 401
+        token reset are the same, so `_download` carries the same decorator.
+
+        Raises like every other method here; whether a missing photo is worth
+        losing the message over is the caller's call, not this one's.
+        """
+        try:
+            logger.info(op)
+            return self._download(uri, filename)
+        except Exception as e:
+            where = f" [{op}]" if op else ""
+            logger.exception(f"RingCentral Error{where}: {e}")
+            if op:
+                raise RuntimeError(f"{op}: {e}") from e
+            raise
+
+    @retry(
+        wait=_wait_rc,
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
+    def _download(self, uri: str, filename: str = "") -> Attachment:
+        """Fetch one absolute media uri and return its bytes.
+
+        `body()` rather than `json_dict()`, and the absolute uri passes through
+        create_url untouched while inflate_request still signs it, so the
+        media.ringcentral.com host needs no token plumbing of its own.
+
+        An oversized body raises a plain RuntimeError rather than an
+        ApiException so _is_retryable answers False - there is nothing to gain
+        from pulling the same blob down twice more.
+        """
+        platform = self._platform()
+        try:
+            response = platform.get(uri)
+        except ApiException as e:
+            self._note_api_failure(platform, e)
+            raise
+
+        content = response.body()
+        if len(content) > MAX_ATTACHMENT_BYTES:
+            raise RuntimeError(
+                f"attachment is {len(content)} bytes, over the "
+                f"{MAX_ATTACHMENT_BYTES} byte cap")
+
+        content_type = _media_type(response.response())
+        return Attachment(
+            filename=_attachment_name(uri, content_type, filename),
+            content=content,
+            content_type=content_type,
+        )
+
     # ----------------------------------------------------------------------
     # Domain
     # ----------------------------------------------------------------------
