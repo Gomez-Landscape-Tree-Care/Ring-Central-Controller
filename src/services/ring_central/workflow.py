@@ -38,19 +38,6 @@ CALL_ENTRY_TYPE = "call"
 PROCEEDING = "Proceeding"
 ANSWERED = "Answered"
 
-
-def process_ring_central(event):
-    """Route one RingCentral notification by the event filter it arrived on."""
-    # The "event" string is the subscription's own event filter echoed back,
-    # optionally with its query string (e.g. "?type=SMS") still attached.
-    filter_path = (event.get('event') or '')
-    if '/telephony/sessions' in filter_path:
-        return process_telephony_session(event)
-
-    logger.info("Ignoring RingCentral notification on %s", filter_path)
-    return None
-
-
 def process_outbound_message(payload):
     """One outbound SMS off the queue: claim the id, fetch it, record it.
 
@@ -425,7 +412,7 @@ def image_attachments(body) -> list[dict]:
     return photos
 
 
-def process_telephony_session(event):
+def process_calls(event):
     """One state change on a call: put it on the boards if it is one worth a line.
 
     No fetch needed - a telephony notification carries the whole state change,

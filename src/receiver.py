@@ -26,20 +26,10 @@ sqs = boto3.client("sqs")
 MONDAY_PATH = "/monday"
 MONDAY_CREATE_UPDATE = "create_update"
 
-# The instant message-store subscription delivers inbound SMS here. The event
-# filter it arrived on is checked as well as the path, because the group id
-# below is SMS shaped and a telephony payload would be given a nonsense one.
 INBOUND_SMS_PATH = "/sms/inbound"
-INSTANT_FILTER = "/message-store/instant"
-
-# The outbound message-store subscription delivers here. Unlike the instant one
-# it carries no message, only the extension and the ids of what is new, so the
-# group id below is the extension rather than the person.
 OUTBOUND_SMS_PATH = "/sms/outbound"
+CALLS_PATH = '/calls'
 
-# One path per calling Lambda rather than one path and a body field, so a
-# request that reaches the wrong handler is a 404-shaped mistake rather than a
-# text credited to the wrong service.
 SEND_PATHS = {"/ab": sources.AB, "/cl": sources.CL}
 
 # FIFO ids take alphanumerics and punctuation, up to 128 characters.
@@ -82,13 +72,13 @@ def _enqueue(body, group_id, deduplication_id, source):
     logger.info("Enqueued %s %s in group %s", source, deduplication_id, group_id)
 
 
-def _handle_ring_central(notification):
+def _handle_calls(notification):
     if "subscriptionId" not in notification:
         logger.info("Ignoring request without a subscriptionId")
         return response(200, {"ok": True})
 
     group_id, deduplication_id = _fifo_keys(notification)
-    _enqueue(notification, group_id, deduplication_id, sources.RING_CENTRAL)
+    _enqueue(notification, group_id, deduplication_id, sources.RING_CENTRAL_CALLS)
 
     return response(200, {"ok": True})
 
@@ -236,10 +226,6 @@ def lambda_handler(event, context):
         logger.info("Ring Central subscription handshake")
         return response(200, {}, {"Validation-Token": validation_token})
 
-    # TODO: authenticate the caller before enqueueing. The Function URL is public
-    # (AuthType NONE) — verify the Ring Central verification token and monday's
-    # signing header.
-
     path = event.get("requestContext", {}).get("http", {}).get("path", "/")
     body = get_body(event)
 
@@ -251,4 +237,7 @@ def lambda_handler(event, context):
         return _handle_inbound_sms(body)
     if path == OUTBOUND_SMS_PATH:
         return _handle_outbound_sms(body)
-    return _handle_ring_central(body)
+    if path == CALLS_PATH:
+        return _handle_calls(body)
+
+    return response(200, {'ok': True})

@@ -13,7 +13,7 @@ body = {
     ],
     "expiresIn": 315360000,
     "deliveryMode": {
-        "address": "https://gbtiklkmpxldp74yu7r4olnwqm0qrqzk.lambda-url.us-west-1.on.aws/",
+        "address": "https://gbtiklkmpxldp74yu7r4olnwqm0qrqzk.lambda-url.us-west-1.on.aws/calls",
         "transportType": "WebHook",
     }
 }
