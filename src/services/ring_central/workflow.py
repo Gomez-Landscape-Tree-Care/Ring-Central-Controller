@@ -175,7 +175,13 @@ def record_sms(message):
             entry_type=SMS_ENTRY_TYPE,
             timestamp=timestamp,
             outbound=True)
-        rebuild_timelines(phone, items)
+        process_items(phone, items)
+    else:
+        # No rebuild on this side: an inbound SMS gets no Slash timeline entry
+        # here, and rebuilding off a read that does not know about it would only
+        # rewrite the column with what it already holds.
+        for board, item_id in items:
+            monday.set_output(board, item_id, board.outputs.unread_text)
     return message
 
 
@@ -264,7 +270,7 @@ def send_and_record(phone, text, *, timestamp, author_id, op="", skip_board=None
     except Exception:
         logger.exception("Slash timeline entry failed for %s, already sent", phone)
 
-    rebuild_timelines(phone, items)
+    process_items(phone, items)
 
     body = update_body(text, timestamp, True)
     for board, item_id in items:
@@ -284,7 +290,7 @@ def timeline_entry(author_id) -> str:
     return f"{sender} sent a text message" if sender else "Someone sent a text message"
 
 
-def rebuild_timelines(phone, items) -> None:
+def process_items(phone, items) -> None:
     """Re-render the Timeline column on each of `items` from what Slash holds.
 
     Read back rather than appended to: Slash is the record this service and both
@@ -320,7 +326,9 @@ def rebuild_timelines(phone, items) -> None:
     column = render_timeline([(entry.entry, entry.timestamp) for entry in entries])
     monday = get_monday_controller()
     for board, item_id in items:
-        monday.write_timeline(board, item_id, column)
+        values = {board.timeline_column: {"text": column}}
+        values[board.output_column] = {"label": board.outputs.text_sent}
+        monday.update_columns(board, item_id, values)
     return None
 
 
@@ -422,7 +430,7 @@ def process_calls(event):
 
     Nothing past the Slash entry is allowed to raise. This arrives over the FIFO
     queue, so a raise is a redelivery, and the timeline route appends rather than
-    upserts - rebuild_timelines and the writes under it already swallow their
+    upserts - process_items and the writes under it already swallow their
     own failures, which is what keeps a failed column write from putting a second
     copy of the line into Slash.
     """
@@ -476,7 +484,7 @@ def process_calls(event):
         entry_type=CALL_ENTRY_TYPE,
         timestamp=event_time(session),
         outbound=outbound)
-    rebuild_timelines(phone, items)
+    process_items(phone, items)
     return session
 
 

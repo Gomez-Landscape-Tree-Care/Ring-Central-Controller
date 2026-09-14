@@ -5,6 +5,7 @@ from config import AB_BOARD_ID, CL_BOARD_ID, TEST_PHONE
 from logger_config import logger
 from services.monday.column_ids import ABColIds, CLColIds
 from services.monday.model import MondayModel
+from services.monday.statuses import ABOutputs, CLOutputs
 from utils.normalize import normalize_phone, normalize_phone_with_plus
 
 
@@ -12,22 +13,29 @@ from utils.normalize import normalize_phone, normalize_phone_with_plus
 class Board:
     """One board, and the columns this service reads a person off or writes to.
 
-    The board id rides along with the column ids because change_column_value
-    resolves a column against its board, where an update hangs off the item
-    alone - so a caller holding an item id still cannot write a column without
-    knowing which board it came from.
+    The board id rides along with the column ids because a column write resolves
+    a column against its board, where an update hangs off the item alone - so a
+    caller holding an item id still cannot write a column without knowing which
+    board it came from.
     """
 
     id: int
     phone_column: str
     timeline_column: str
+    output_column: str
+    outputs: type[ABOutputs | CLOutputs]
     label: str
 
 
+# The two boards spell the same two labels differently - "Text sent" on CL,
+# "Text Sent" on AB - and monday matches a label by its exact text, so each
+# board carries its own set the way it carries its own column ids.
 CL = Board(id=CL_BOARD_ID, phone_column=CLColIds.phone,
-           timeline_column=CLColIds.timeline, label="Clients & Leads")
+           timeline_column=CLColIds.timeline, output_column=CLColIds.output,
+           outputs=CLOutputs, label="Clients & Leads")
 AB = Board(id=AB_BOARD_ID, phone_column=ABColIds.phone,
-           timeline_column=ABColIds.timeline, label="Applicants Board")
+           timeline_column=ABColIds.timeline, output_column=ABColIds.output,
+           outputs=ABOutputs, label="Applicants Board")
 
 # Both boards carry the same person, so every write this service makes goes to
 # whichever of them has them. Order is the order the writes land in.
@@ -116,7 +124,7 @@ class MondayController:
         behind a phone, where the create_update webhook arrives naming an item
         and needing the person to text.
 
-        The board comes in for the reason write_timeline's does: a phone column
+        The board comes in for the reason update_columns' does: a phone column
         belongs to a board, so an item id on its own does not say where to read.
 
         Normalized here rather than by the caller because the column holds
@@ -175,28 +183,41 @@ class MondayController:
             logger.exception("%s update failed for item %s", board.label, item_id)
         return None
 
-    def write_timeline(self, board: Board, item_id: str, text: str) -> None:
-        """Overwrite one item's Timeline column with `text`.
+    def update_columns(self, board: Board, item_id: str, values: dict) -> None:
+        """Overwrite every column in `values` on one item, in one monday call.
 
-        A replace rather than a prepend: the caller renders the whole column
-        from Slash, which is the record this service and both board automations
-        share, so a rebuild also picks up whatever the other two have written
-        since this one last looked.
+        `values` carries monday's own shape per column - {"text": ...} for the
+        Timeline, {"label": ...} for Outputs - so a caller writing both pays for
+        one call rather than two. The instant message webhook is what makes that
+        worth doing: it runs every write this service makes against the same
+        complexity budget, with no queue to spread them over.
 
         Swallowed like add_photo_to_update below and for the same reason - this
-        runs after the Slash entry and the board updates have landed, and the
-        instant message webhook has no queue behind it, so a raise is a 5xx
-        RingCentral retries into a duplicate text and duplicate updates.
+        runs after the Slash entry and the board updates have landed, and that
+        same webhook has no queue behind it, so a raise is a 5xx RingCentral
+        retries into a duplicate text and duplicate updates.
         """
+        if not values:
+            return None
+
         try:
-            self.client.write_long_text_column(
-                board_id=board.id, item_id=item_id,
-                column_id=board.timeline_column, text=text,
-                op=f"Rebuild {board.label} timeline on item {item_id}")
+            self.client.update_column_values(
+                board_id=board.id, item_id=item_id, values=values,
+                op=f"Write {board.label} columns {', '.join(values)} on item {item_id}")
         except Exception:
-            logger.exception("%s timeline column failed for item %s",
+            logger.exception("%s column write failed for item %s",
                              board.label, item_id)
         return None
+
+    def set_output(self, board: Board, item_id: str, label: str) -> None:
+        """Put one item's Outputs column on `label`.
+
+        The one write that stands alone: an inbound SMS marks the item unread
+        without touching the Timeline, where every other caller has a rebuilt
+        Timeline to send with it and composes the pair itself.
+        """
+        return self.update_columns(
+            board, item_id, {board.output_column: {"label": label}})
 
     def add_photo_to_update(self, update_id: str | None, filename: str,
                             content: bytes, content_type: str) -> None:

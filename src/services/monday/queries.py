@@ -75,24 +75,31 @@ def add_file_to_update(update_id: str) -> str:
     """
 
 
-def write_long_text_column(board_id: int, item_id: str, column_id: str, text: str) -> str:
-    """Overwrite one long_text column with `text`, replacing whatever it held.
+def update_column_values(board_id: int, item_id: str, values: dict) -> str:
+    """Overwrite several of one item's columns in a single mutation.
 
-    `value` is a JSON! rather than the String! `body` is, so it takes the double
-    encode create_update's body does not: once to build the {"text": ...} the
-    column type wants, again to land that object as a GraphQL string literal.
+    `values` is {column_id: the shape monday's own column type wants} - {"text":
+    ...} for a long_text, {"label": ...} for a status - which is what leaves this
+    generic over column types. StrEnum ids and labels go through json.dumps as
+    the plain strings they are.
+
+    `column_values` is a JSON! rather than the String! `body` is, so it takes the
+    double encode create_update's body does not: once to build the object the
+    column types want, again to land that object as a GraphQL string literal.
+
+    create_labels_if_missing is deliberately left off: a mistyped label should
+    fail rather than quietly add an option to the column.
 
     The board id is required here and nowhere else in this file - monday resolves
     a column against its board, where an update hangs off the item alone.
     """
-    value = json.dumps({"text": text})
+    value = json.dumps(values)
     return f"""
         mutation {{
-            change_column_value(
+            change_multiple_column_values(
                 board_id: {json.dumps(str(board_id))},
                 item_id: {json.dumps(str(item_id))},
-                column_id: {json.dumps(str(column_id))},
-                value: {json.dumps(value)}
+                column_values: {json.dumps(value)}
             ) {{
                 id
             }}
@@ -113,7 +120,7 @@ def item_column_text(item_id: str, column_id: str) -> str:
     board carries dozens of columns, and the response is the only thing this pays
     for. Both ids are quoted scalars, so each takes the single json.dumps
     create_update's item_id takes, not the double encode
-    write_long_text_column's value takes.
+    update_column_values' column_values takes.
     """
     return f"""
         query {{
