@@ -181,7 +181,14 @@ def record_sms(message):
         # here, and rebuilding off a read that does not know about it would only
         # rewrite the column with what it already holds.
         for board, item_id in items:
-            monday.set_output(board, item_id, board.outputs.unread_text)
+            monday.update_columns(
+                board=board,
+                item_id=item_id,
+                values={
+                    board.output_column: {'label': board.outputs.unread_text},
+                    board.automations: {'label': ''}
+                }
+            )
     return message
 
 
@@ -328,6 +335,7 @@ def process_items(phone, items) -> None:
     for board, item_id in items:
         values = {board.timeline_column: {"text": column}}
         values[board.output_column] = {"label": board.outputs.text_sent}
+        values[board.automations] = {'label': ''}
         monday.update_columns(board, item_id, values)
     return None
 

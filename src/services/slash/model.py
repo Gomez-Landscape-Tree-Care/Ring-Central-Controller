@@ -12,13 +12,7 @@ _TIMEOUT = 30
 
 
 def _wire_phone(phone: str) -> str:
-    """A phone in the `+1xxxxxxxxxx` form Slash keys on.
-
-    Every other surface in this codebase - Application.phone, ABItem.phone, the
-    Monday match key, config.TEST_PHONE - carries normalize_phone's bare
-    `1xxxxxxxxxx`, so the two formats meet here and nowhere else. Callers pass
-    the bare form; every route below converts on the way out.
-    """
+    """A phone in the `+1xxxxxxxxxx` form Slash keys on."""
     return normalize_phone_with_plus(phone) or phone
 
 

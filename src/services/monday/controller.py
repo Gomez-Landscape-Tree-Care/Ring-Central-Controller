@@ -25,6 +25,7 @@ class Board:
     output_column: str
     outputs: type[ABOutputs | CLOutputs]
     label: str
+    automations: str
 
 
 # The two boards spell the same two labels differently - "Text sent" on CL,
@@ -32,10 +33,10 @@ class Board:
 # board carries its own set the way it carries its own column ids.
 CL = Board(id=CL_BOARD_ID, phone_column=CLColIds.phone,
            timeline_column=CLColIds.timeline, output_column=CLColIds.output,
-           outputs=CLOutputs, label="Clients & Leads")
+           outputs=CLOutputs, label="Clients & Leads", automations=CLColIds.automations)
 AB = Board(id=AB_BOARD_ID, phone_column=ABColIds.phone,
            timeline_column=ABColIds.timeline, output_column=ABColIds.output,
-           outputs=ABOutputs, label="Applicants Board")
+           outputs=ABOutputs, label="Applicants Board", automations=ABColIds.automations)
 
 # Both boards carry the same person, so every write this service makes goes to
 # whichever of them has them. Order is the order the writes land in.
@@ -208,16 +209,6 @@ class MondayController:
             logger.exception("%s column write failed for item %s",
                              board.label, item_id)
         return None
-
-    def set_output(self, board: Board, item_id: str, label: str) -> None:
-        """Put one item's Outputs column on `label`.
-
-        The one write that stands alone: an inbound SMS marks the item unread
-        without touching the Timeline, where every other caller has a rebuilt
-        Timeline to send with it and composes the pair itself.
-        """
-        return self.update_columns(
-            board, item_id, {board.output_column: {"label": label}})
 
     def add_photo_to_update(self, update_id: str | None, filename: str,
                             content: bytes, content_type: str) -> None:
