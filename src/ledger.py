@@ -8,10 +8,11 @@ told to stand down. It answers one question - "is this message mine to record?"
 The controller registers every SMS it sends, so the Outbound message-store
 webhook RingCentral fires straight back at us finds the id taken and stops,
 rather than mirroring our own text onto the boards as though an agent had typed
-it in the RingCentral app. process_message_store claims every id it is handed,
-so a redelivered notification stops in the same place. Kept out of config.py for
-the reason sources.py documents - config resolves SSM at import, and this module
-has to stay importable by anything.
+it in the RingCentral app. process_outbound_message claims the id it is handed
+off the queue, so a redelivered notification stops in the same place - as does
+the second copy while both outbound subscriptions are briefly live. Kept out of
+config.py for the reason sources.py documents - config resolves SSM at import,
+and this module has to stay importable by anything.
 
 Entries expire after a day: the window only has to outlive RingCentral's own
 redelivery, and a ledger kept forever would cost more to hold than the

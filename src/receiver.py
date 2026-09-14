@@ -1,9 +1,10 @@
 """Lambda entrypoint for the public webhook receiver.
 
 Accepts Ring Central telephony session notifications on "/", Ring Central
-inbound SMS notifications on "/sms/inbound", monday.com webhooks on "/monday",
-and send-this-text requests from the AB (Applicants Board) and CL (Clients &
-Leads) Lambdas on "/ab" and "/cl". All of them go on the FIFO queue the
+inbound SMS notifications on "/sms/inbound" and outbound ones on "/sms/outbound",
+monday.com webhooks on "/monday", and send-this-text requests from the AB
+(Applicants Board) and CL (Clients & Leads) Lambdas on "/ab" and "/cl". All of
+them go on the FIFO queue the
 processor consumes. No Ring Central or monday API work happens here — that
 belongs on the far side of the queue.
 """
@@ -30,6 +31,11 @@ MONDAY_CREATE_UPDATE = "create_update"
 # below is SMS shaped and a telephony payload would be given a nonsense one.
 INBOUND_SMS_PATH = "/sms/inbound"
 INSTANT_FILTER = "/message-store/instant"
+
+# The outbound message-store subscription delivers here. Unlike the instant one
+# it carries no message, only the extension and the ids of what is new, so the
+# group id below is the extension rather than the person.
+OUTBOUND_SMS_PATH = "/sms/outbound"
 
 # One path per calling Lambda rather than one path and a body field, so a
 # request that reaches the wrong handler is a 404-shaped mistake rather than a
@@ -98,7 +104,7 @@ def _handle_inbound_sms(notification):
     is a repeat worth collapsing, and a text dropped because it looked like one
     already seen is worse than one recorded twice.
     """
-    body = notification.get("body")
+    body = notification.get("body") or {}
     raw_phone = (body.get("from") or {}).get("phoneNumber", '')
     phone = normalize_phone_with_plus(raw=raw_phone)
     if not phone:
@@ -108,6 +114,55 @@ def _handle_inbound_sms(notification):
 
     _enqueue(notification, _fifo_id(phone), str(uuid.uuid4()),
              sources.RING_CENTRAL_INBOUND_SMS)
+
+    return response(200, {"ok": True})
+
+
+def _handle_outbound_sms(notification):
+    """The ids of one or more outbound SMS, grouped by the extension that sent them.
+
+    One queue message per id rather than one per notification, because the
+    deduplication id is per message - and the Ring Central message id is the
+    only natural one this service gets on any path. It collapses a redelivery
+    for five minutes where the ledger past the queue collapses it for a day.
+
+    The group is the extension because the payload offers nothing better: this
+    subscription carries ids and no phone, and resolving one to a person needs
+    Ring Central credentials this function does not have. Outbound texts from an
+    extension therefore order against each other rather than against the person
+    they went to, which is what the phone-keyed groups elsewhere buy.
+
+    The body is trimmed to what the far side reads, the way _handle_send_request
+    trims a send request: the extension, and one id to fetch with it.
+    """
+    body = notification.get("body") or {}
+    message_ids = [message_id
+                   for change in body.get("changes") or []
+                   for message_id in change.get("newMessageIds") or []
+                   if message_id]
+    if not message_ids:
+        logger.info("No new messages on this message-store notification")
+        return response(200, {"ok": True})
+
+    # ownerId is the same extension under another name - process_instant_message
+    # reads it off the envelope for exactly this. Worth preferring to the uuid
+    # below, which can group a notification but leaves nothing to fetch against.
+    extension_id = body.get("extensionId") or notification.get("ownerId")
+    if extension_id:
+        group_id = _fifo_id(f"ext-{extension_id}")
+    else:
+        # Prefixed for the same reason: a bare numeric group id is also what the
+        # monday path builds out of an item id, and two sources sharing a group
+        # would queue behind each other for nothing.
+        group_id = _fifo_id("ext-" + str(notification.get("uuid")
+                                         or notification.get("subscriptionId")
+                                         or uuid.uuid4()))
+        logger.info("No extension on this notification, falling back to %s", group_id)
+
+    for message_id in message_ids:
+        _enqueue({"extension_id": extension_id, "message_id": message_id},
+                 group_id, _fifo_id(str(message_id)),
+                 sources.RING_CENTRAL_OUTBOUND_SMS)
 
     return response(200, {"ok": True})
 
@@ -194,4 +249,6 @@ def lambda_handler(event, context):
         return _handle_send_request(body, SEND_PATHS[path])
     if path == INBOUND_SMS_PATH:
         return _handle_inbound_sms(body)
+    if path == OUTBOUND_SMS_PATH:
+        return _handle_outbound_sms(body)
     return _handle_ring_central(body)

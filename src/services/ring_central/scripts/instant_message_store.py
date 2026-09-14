@@ -1,9 +1,9 @@
 """Create a RingCentral webhook subscription for instant (inbound) SMS messages.
 
-Delivered to the receiver, which puts it on the FIFO queue. The outbound
-message-store subscription still goes straight at the controller - its payload
-carries only message ids, and resolving those to a phone needs RingCentral
-credentials the receiver does not have.
+Delivered to the receiver, which puts it on the FIFO queue grouped by the number
+it came from. The outbound subscription reaches the receiver too, but groups on
+the extension instead: this one delivers the whole message inline, where that one
+carries only ids and the phone is not knowable until they have been fetched.
 """
 import json
 

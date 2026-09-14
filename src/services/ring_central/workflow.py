@@ -46,57 +46,57 @@ def process_ring_central(event):
     filter_path = (event.get('event') or '')
     if '/telephony/sessions' in filter_path:
         return process_telephony_session(event)
-    elif '/message-store/instant' in filter_path:
-        return process_instant_message(event)
-    elif '/message-store' in filter_path:
-        return process_message_store(event)
 
     logger.info("Ignoring RingCentral notification on %s", filter_path)
     return None
 
 
-def process_message_store(event):
-    """A batch of new messages - outbound, by this subscription's filter.
+def process_outbound_message(payload):
+    """One outbound SMS off the queue: claim the id, fetch it, record it.
 
-    The claim comes before the fetch, not after: every SMS this system sends
-    arrives back here, and answering those with one conditional put is the whole
-    point of the ledger. Gating on the phone first would mean fetching each one
-    off RingCentral only to throw it away, and the phone is not knowable until
-    the fetch has happened anyway.
+    The claim comes before the fetch, as it did when these arrived a batch at a
+    time: every SMS this service sends comes back here, and answering those with
+    one conditional put is the whole point of the ledger. Gating on the phone
+    first would mean fetching a message off RingCentral only to throw it away,
+    and the phone is not knowable until the fetch has happened.
+
+    Failures raise, where process_message_store below swallows them. That one
+    answers RingCentral, which retires a subscription that keeps returning 5xx;
+    this one answers the queue, where a raise is a redelivery and then the dead
+    letter queue. The claim is released first either way - a redelivery that
+    found the id still taken would drop the message and report success.
     """
-    body = event.get('body') or {}
-    extension_id = body.get('extensionId')
-    message_ids = [message_id for message_id in extract_new_message_ids(body)
-                   if ledger.claim(message_id)]
-    if not message_ids:
+    message_id = payload.get('message_id')
+    extension_id = payload.get('extension_id')
+    if not message_id or not extension_id:
+        # Returned rather than raised: a payload this malformed will not fetch on
+        # the third attempt either, and three receives buys only a dead letter
+        # nobody can act on.
+        logger.warning("Outbound SMS payload carries no %s, nothing to fetch",
+                       "message id" if not message_id else "extension id")
         return None
 
-    records = RingCentralController().get_messages(extension_id, message_ids)
-    logger.info("Fetched %d of %d claimed message(s) for extension %s",
-                len(records), len(message_ids), extension_id)
+    if not ledger.claim(message_id):
+        return None
 
-    # get_messages drops an id it could not fetch rather than raising, so the
-    # ones that did not come back are given up - a claim nothing ever recorded
-    # would otherwise hold the message out of reach until the entry expires.
-    fetched = {str(record.get('id')) for record in records}
-    for message_id in message_ids:
-        if str(message_id) not in fetched:
-            ledger.release(message_id)
+    records = RingCentralController().get_messages(extension_id, [message_id])
+    if not records:
+        # Raised rather than given up on. get_messages swallows a failed fetch so
+        # one bad id cannot cost its neighbours, and with a single id there are
+        # no neighbours left to protect - what it hides now is the difference
+        # between a message that was purged and RingCentral being briefly
+        # unreachable. Only the queue can tell those apart, by trying again.
+        ledger.release(message_id)
+        raise RuntimeError(
+            f"Could not fetch message {message_id} on extension {extension_id}")
 
-    messages = []
-    for record in records:
-        message = sms_fields(record, extension_id)
-        try:
-            messages.append(record_sms(message))
-        except Exception:
-            # Released and swallowed rather than raised: RingCentral retires a
-            # subscription that keeps answering 5xx, so an outage that took the
-            # handler down with it would cost the webhook itself. Per record, so
-            # one bad message does not take the rest of the batch with it.
-            ledger.release(message['id'])
-            logger.exception("Recording SMS %s failed, claim released",
-                             message['id'])
-    return messages
+    message = sms_fields(records[0], extension_id)
+    logger.info("Received outbound SMS message %s", message)
+    try:
+        return record_sms(message)
+    except Exception:
+        ledger.release(message_id)
+        raise
 
 
 def extract_new_message_ids(body):
@@ -107,7 +107,7 @@ def extract_new_message_ids(body):
     return ids
 
 
-def process_instant_message(event):
+def process_inbound_message(event):
     """A single new SMS or MMS delivered in full: keep it in Slash and on the boards.
 
     No ledger claim here. This subscription is the inbound half of the pair and
@@ -116,7 +116,7 @@ def process_instant_message(event):
     filter alone.
     """
     message = sms_fields(event.get('body') or {}, event.get('ownerId'))
-    logger.info("Received instant SMS message %s", message)
+    logger.info("Received inbound SMS message %s", message)
     return record_sms(message)
 
 

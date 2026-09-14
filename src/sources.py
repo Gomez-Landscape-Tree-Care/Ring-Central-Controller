@@ -6,6 +6,7 @@ and the receiver function has none of those env vars.
 
 RING_CENTRAL = "ring-central"
 RING_CENTRAL_INBOUND_SMS = "ring-central-inbound-sms"
+RING_CENTRAL_OUTBOUND_SMS = "ring-central-outbound-sms"
 MONDAY = "monday"
 AB = "ab"
 CL = "cl"

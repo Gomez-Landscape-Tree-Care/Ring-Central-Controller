@@ -43,7 +43,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: ring-central-controller
-      Description: Queue consumer, outbound message-store webhook and CL/AB request handler
+      Description: Queue consumer for every Ring Central, monday and CL/AB event
       Handler: app.lambda_handler
       Timeout: 120
       LoggingConfig:
@@ -82,7 +82,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: ring-central-controller-receiver
-      Description: Public webhook receiver — enqueues telephony, inbound SMS and monday notifications
+      Description: Public webhook receiver — enqueues telephony, inbound and outbound SMS, and monday notifications
       Handler: receiver.lambda_handler
       Timeout: 30
       LoggingConfig:
@@ -102,10 +102,12 @@ Resources:
       LogGroupName: /aws/lambda/ring-central-controller-receiver
       RetentionInDays: 30
 
-  # Ordered per call for Ring Central and per item for monday. Ring Central
-  # deduplicates per call state; monday has no natural dedup key, so the receiver
-  # sends a random one. Both producers always supply both ids, so content based
-  # deduplication stays off.
+  # Ordered per call for telephony, per person for inbound SMS and CL/AB sends,
+  # per extension for outbound SMS (its payload carries no phone) and per item
+  # for monday. Telephony deduplicates per call state and outbound SMS on the
+  # Ring Central message id; the rest have no natural dedup key, so the receiver
+  # sends a random one. Every producer always supplies both ids, so content
+  # based deduplication stays off.
   RingCentralEventQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -151,7 +153,9 @@ Resources:
 
 Outputs:
   FunctionUrl:
-    Description: Public HTTPS endpoint for the outbound message-store webhook subscription
+    Description: >-
+      Public HTTPS endpoint the outbound message-store subscription used to post to.
+      Kept only until that subscription is repointed at the receiver's /sms/outbound.
     Value: !GetAtt RingCentralControllerFunctionUrl.FunctionUrl
   FunctionArn:
     Description: ARN of the controller function
@@ -159,11 +163,11 @@ Outputs:
   ReceiverFunctionUrl:
     Description: >-
       Public HTTPS endpoint for the telephony sessions webhook subscription;
-      the inbound SMS subscription and monday webhooks subscribe to the same URL
-      with a /sms/inbound and /monday path
+      the inbound and outbound SMS subscriptions and monday webhooks subscribe to
+      the same URL with a /sms/inbound, /sms/outbound and /monday path
     Value: !GetAtt RingCentralReceiverFunctionUrl.FunctionUrl
   EventQueueUrl:
-    Description: FIFO queue carrying telephony, inbound SMS and monday notifications to the controller
+    Description: FIFO queue carrying telephony, SMS, monday and CL/AB events to the controller
     Value: !Ref RingCentralEventQueue
   EventDLQUrl:
     Description: Dead letter queue for telephony notifications that exhausted their retries
