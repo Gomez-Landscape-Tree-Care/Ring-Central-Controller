@@ -1,9 +1,10 @@
 """Lambda entrypoint for the public webhook receiver.
 
-Accepts Ring Central telephony session notifications on "/", monday.com webhooks
-on "/monday", and send-this-text requests from the AB (Applicants Board) and CL
-(Clients & Leads) Lambdas on "/ab" and "/cl". All of them go on the FIFO queue
-the processor consumes. No Ring Central or monday API work happens here — that
+Accepts Ring Central telephony session notifications on "/", Ring Central
+inbound SMS notifications on "/sms/inbound", monday.com webhooks on "/monday",
+and send-this-text requests from the AB (Applicants Board) and CL (Clients &
+Leads) Lambdas on "/ab" and "/cl". All of them go on the FIFO queue the
+processor consumes. No Ring Central or monday API work happens here — that
 belongs on the far side of the queue.
 """
 
@@ -23,6 +24,12 @@ sqs = boto3.client("sqs")
 
 MONDAY_PATH = "/monday"
 MONDAY_CREATE_UPDATE = "create_update"
+
+# The instant message-store subscription delivers inbound SMS here. The event
+# filter it arrived on is checked as well as the path, because the group id
+# below is SMS shaped and a telephony payload would be given a nonsense one.
+INBOUND_SMS_PATH = "/sms/inbound"
+INSTANT_FILTER = "/message-store/instant"
 
 # One path per calling Lambda rather than one path and a body field, so a
 # request that reaches the wrong handler is a 404-shaped mistake rather than a
@@ -76,6 +83,31 @@ def _handle_ring_central(notification):
 
     group_id, deduplication_id = _fifo_keys(notification)
     _enqueue(notification, group_id, deduplication_id, sources.RING_CENTRAL)
+
+    return response(200, {"ok": True})
+
+
+def _handle_inbound_sms(notification):
+    """One inbound SMS, grouped by the number it came from.
+
+    The person is what has to stay ordered, and the normalized phone is the same
+    group id _handle_send_request uses, so a text from somebody and a text going
+    back out to them order against each other rather than racing.
+
+    Deduplication is off, as it is on the monday and send paths: nothing here
+    is a repeat worth collapsing, and a text dropped because it looked like one
+    already seen is worse than one recorded twice.
+    """
+    body = notification.get("body")
+    raw_phone = (body.get("from") or {}).get("phoneNumber", '')
+    phone = normalize_phone_with_plus(raw=raw_phone)
+    if not phone:
+        phone = notification.get("uuid") or notification["subscriptionId"]
+        logger.info("No usable sender on message %s, falling back to %s",
+                    body.get("id"), phone)
+
+    _enqueue(notification, _fifo_id(phone), str(uuid.uuid4()),
+             sources.RING_CENTRAL_INBOUND_SMS)
 
     return response(200, {"ok": True})
 
@@ -160,4 +192,6 @@ def lambda_handler(event, context):
         return _handle_monday(body)
     if path in SEND_PATHS:
         return _handle_send_request(body, SEND_PATHS[path])
+    if path == INBOUND_SMS_PATH:
+        return _handle_inbound_sms(body)
     return _handle_ring_central(body)

@@ -1,10 +1,10 @@
 """Lambda entrypoint for the Ring Central Controller.
 
-Consumes Ring Central telephony notifications, monday webhooks and CL
-(ClientsLeads) / AB (Applicants Board) send requests off the FIFO queue, and
-receives message-store webhooks directly over a Function URL. The three queued
-sources reach the queue through the receiver, which is the only function that
-can write to it.
+Consumes Ring Central telephony and inbound SMS notifications, monday webhooks
+and CL (ClientsLeads) / AB (Applicants Board) send requests off the FIFO queue,
+and receives the outbound message-store webhook directly over a Function URL.
+The queued sources reach the queue through the receiver, which is the only
+function that can write to it.
 """
 
 import json
@@ -13,7 +13,8 @@ import sources
 from utils.http_utils import get_body, response
 from logger_config import logger
 from services.monday.workflow import process_monday
-from services.ring_central.workflow import (process_ring_central,
+from services.ring_central.workflow import (process_instant_message,
+                                            process_ring_central,
                                             process_send_request)
 
 
@@ -32,6 +33,8 @@ def _process_queue_records(records):
             process_monday(body)
         elif source in (sources.AB, sources.CL):
             process_send_request(body, source)
+        elif source == sources.RING_CENTRAL_INBOUND_SMS:
+            process_instant_message(body)
         else:
             process_ring_central(body)
 

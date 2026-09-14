@@ -1,4 +1,4 @@
-"""List existing RingCentral webhook subscriptions."""
+"""List the phone numbers on this RingCentral extension."""
 import json
 
 from ringcentral import SDK

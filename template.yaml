@@ -43,7 +43,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: ring-central-controller
-      Description: Telephony queue consumer, message-store webhook and CL/AB request handler
+      Description: Queue consumer, outbound message-store webhook and CL/AB request handler
       Handler: app.lambda_handler
       Timeout: 120
       LoggingConfig:
@@ -82,7 +82,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: ring-central-controller-receiver
-      Description: Public webhook receiver — enqueues telephony and monday notifications
+      Description: Public webhook receiver — enqueues telephony, inbound SMS and monday notifications
       Handler: receiver.lambda_handler
       Timeout: 30
       LoggingConfig:
@@ -151,7 +151,7 @@ Resources:
 
 Outputs:
   FunctionUrl:
-    Description: Public HTTPS endpoint for the message-store webhook subscriptions
+    Description: Public HTTPS endpoint for the outbound message-store webhook subscription
     Value: !GetAtt RingCentralControllerFunctionUrl.FunctionUrl
   FunctionArn:
     Description: ARN of the controller function
@@ -159,10 +159,11 @@ Outputs:
   ReceiverFunctionUrl:
     Description: >-
       Public HTTPS endpoint for the telephony sessions webhook subscription;
-      monday webhooks subscribe to the same URL with a /monday path
+      the inbound SMS subscription and monday webhooks subscribe to the same URL
+      with a /sms/inbound and /monday path
     Value: !GetAtt RingCentralReceiverFunctionUrl.FunctionUrl
   EventQueueUrl:
-    Description: FIFO queue carrying telephony and monday notifications to the controller
+    Description: FIFO queue carrying telephony, inbound SMS and monday notifications to the controller
     Value: !Ref RingCentralEventQueue
   EventDLQUrl:
     Description: Dead letter queue for telephony notifications that exhausted their retries
