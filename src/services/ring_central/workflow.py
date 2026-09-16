@@ -17,7 +17,7 @@ from services.ring_central.model import MAX_SMS_CHARS
 from services.slash.controller import get_controller as get_slash_controller
 from utils.date import internal_timestamp
 from utils.normalize import normalize_phone_with_plus
-from utils.timeline import render_timeline
+from utils.timeline import render_timeline, determine_timeline_entry, forward_timeline_entry, sms_timeline_entry
 
 # An MMS carries its own body as a text/plain part, and can carry a vCard or a
 # voice clip next to the photos. Only the images are worth putting on a board.
@@ -165,30 +165,16 @@ def record_sms(message):
                 content=photo.content, content_type=photo.content_type)
 
     if outbound:
-        sender = MONDAY_USERS[JEFF_BOT_USER_ID]['informal_name']
-        # Unstamped, as every entry Slash holds is: render_timeline stamps each
-        # line from the row's own timestamp, so a stamp in the text itself would
-        # come back doubled on the rebuild below.
         get_slash_controller().create_timeline_entry(
             phone=phone,
-            entry=f"{sender} sent a text message",
+            entry=sms_timeline_entry(JEFF_BOT_USER_ID),
             entry_type=SMS_ENTRY_TYPE,
             timestamp=timestamp,
             outbound=True)
         process_items(phone, items)
     else:
-        # No rebuild on this side: an inbound SMS gets no Slash timeline entry
-        # here, and rebuilding off a read that does not know about it would only
-        # rewrite the column with what it already holds.
-        for board, item_id in items:
-            monday.update_columns(
-                board=board,
-                item_id=item_id,
-                values={
-                    board.output_column: {'label': board.outputs.unread_text},
-                    board.automations: {'label': ''}
-                }
-            )
+        process_items(phone=phone, items=items, forward=False, outbound=False)
+
     return message
 
 
@@ -204,21 +190,71 @@ def process_send_request(payload, source):
     its own, and what the Slash row and the Timeline line are recording is the
     moment the text went out.
     """
-    phone = payload.get('phone')
-    text = (payload.get('message') or "").strip()
-    if not phone or not text:
+    recipients = payload['recipients']
+    text = payload['message']
+    message_type = payload['message_type']
+    author_id = str(payload.get('monday_user_id') or '')
+    if not recipients or not text:
         logger.info("%s send request carries no %s", source,
-                    "phone" if not phone else "message")
+                    "phone" if not recipients else "message")
+        return None
+
+    if message_type == 'forward':
+        client_phone = payload['client_phone']
+        return process_forward(recipients=recipients, text=text, author_id=author_id, client_phone=client_phone)
+
+    phone = normalize_phone_with_plus(recipients[0]['phone'])
+    if not phone:
         return None
 
     return send_and_record(
         phone, text,
         timestamp=datetime.now(timezone.utc),
-        author_id=str(payload.get('monday_user_id') or ''),
-        op=f"Text {source} request to {phone}")
+        author_id=author_id,
+        op=f"Text {source} request to {phone}",
+        message_type=message_type)
+
+def process_forward(recipients: dict, text: str, author_id: str, client_phone: str):
+    monday = get_monday_controller()
+    items = monday.resolve_items(client_phone)
+    if not items:
+        return
+    
+    recipient_names = []
+    for recipient in recipients:
+        phone = normalize_phone_with_plus(recipient['phone'])
+        name = recipient['name']
+        if phone != TEST_PHONE:
+            logger.info("%s is outside the rollout, leaving the text unsent", phone)
+            return None
+        
+        # Cut here rather than leaving it to the model's own slice, so the Slash row
+        # and the board updates carry what went on the wire rather than what was asked.
+        if len(text) > MAX_SMS_CHARS:
+            logger.warning("Text to %s is %d chars, sending the first %d",
+                        phone, len(text), MAX_SMS_CHARS)
+            text = text[:MAX_SMS_CHARS]
+
+        RingCentralController().send_sms(text=text, to_number=phone, op=f'Sent text to {phone}')
+        recipient_names.append(name)
+
+    slash = get_slash_controller()
+
+    try:
+        slash.create_timeline_entry(
+            phone=client_phone,
+            entry=forward_timeline_entry(author_id, recipient_names=recipient_names),
+            entry_type=SMS_ENTRY_TYPE,
+            timestamp=datetime.now(timezone.utc),
+            outbound=True)
+    except Exception:
+        logger.exception("Slash timeline entry failed for %s, already sent", client_phone)
+
+    process_items(phone=client_phone, items=items, forward=True)
+    return None
 
 
-def send_and_record(phone, text, *, timestamp, author_id, op="", skip_board=None):
+def send_and_record(phone: str, text: str, *, timestamp, author_id, op="", skip_board=None, message_type: str):
     """Send one SMS and put it everywhere an outbound text belongs.
 
     The outbound twin of record_sms, and the one send path the service has:
@@ -240,6 +276,7 @@ def send_and_record(phone, text, *, timestamp, author_id, op="", skip_board=None
     # Slash controller each hold one, but neither is on the send path, and this
     # is the only place a number outside the rollout would be texted rather than
     # merely written about.
+  
     if phone != TEST_PHONE:
         logger.info("%s is outside the rollout, leaving the text unsent", phone)
         return None
@@ -248,7 +285,7 @@ def send_and_record(phone, text, *, timestamp, author_id, op="", skip_board=None
     # and the board updates carry what went on the wire rather than what was asked.
     if len(text) > MAX_SMS_CHARS:
         logger.warning("Text to %s is %d chars, sending the first %d",
-                       phone, len(text), MAX_SMS_CHARS)
+                    phone, len(text), MAX_SMS_CHARS)
         text = text[:MAX_SMS_CHARS]
 
     # Up front, once, as record_sms resolves before its writes: the rebuild and
@@ -270,7 +307,7 @@ def send_and_record(phone, text, *, timestamp, author_id, op="", skip_board=None
     try:
         slash.create_timeline_entry(
             phone=phone,
-            entry=timeline_entry(author_id),
+            entry=determine_timeline_entry(message_type=message_type, author_id=author_id),
             entry_type=SMS_ENTRY_TYPE,
             timestamp=timestamp,
             outbound=True)
@@ -282,22 +319,12 @@ def send_and_record(phone, text, *, timestamp, author_id, op="", skip_board=None
     body = update_body(text, timestamp, True)
     for board, item_id in items:
         if skip_board is None or board.id != skip_board.id:
-            monday.create_update(board, item_id, body)
+            monday.create_update(board, item_id, body, monday_user_id=author_id)
+
     return None
 
 
-def timeline_entry(author_id) -> str:
-    """The Timeline line for an SMS sent off a board or a CL/AB request.
-
-    An author MONDAY_USERS has no row for is named by nobody rather than by Jeff
-    Bot: the fallback stands in for the name, not for the person, and crediting
-    somebody else's text to the bot is worse than leaving it unattributed.
-    """
-    sender = MONDAY_USERS.get(author_id, {}).get('informal_name')
-    return f"{sender} sent a text message" if sender else "Someone sent a text message"
-
-
-def process_items(phone, items) -> None:
+def process_items(phone, items, forward=False, outbound=True) -> None:
     """Re-render the Timeline column on each of `items` from what Slash holds.
 
     Read back rather than appended to: Slash is the record this service and both
@@ -334,7 +361,10 @@ def process_items(phone, items) -> None:
     monday = get_monday_controller()
     for board, item_id in items:
         values = {board.timeline_column: {"text": column}}
-        values[board.output_column] = {"label": board.outputs.text_sent}
+        if not forward:
+            values[board.output_column] = {"label": board.outputs.unread_text}
+            if outbound:
+                values[board.output_column] = {"label": board.outputs.text_sent}
         values[board.automations] = {'label': ''}
         monday.update_columns(board, item_id, values)
     return None

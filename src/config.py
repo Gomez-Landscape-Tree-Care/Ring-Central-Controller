@@ -3,6 +3,8 @@ import os
 
 import boto3
 
+from logger_config import logger
+
 ssm = boto3.client("ssm")
 
 @lru_cache
@@ -86,3 +88,36 @@ else:
     RC_CLIENT_SECRET = _get_param("RC_CLIENT_SECRET")
     RC_JWT = _get_param("RC_JWT")
     SLASH_SERVICE_PASSWORD = _get_param("SLASH_SERVICE_PASSWORD")
+
+
+@lru_cache
+def monday_api_key(monday_user_id: str = JEFF_BOT_USER_ID) -> str:
+    """The token monday will attribute an update written with it to.
+
+    create_update carries no author of its own - monday credits an update to the
+    account whose token wrote it - so writing as somebody means holding their key.
+
+    Resolved on the first call rather than at import beside the four secrets
+    above: a container that only ever writes as Jeff Bot should not pay for the
+    other three SSM reads, and lru_cache gives the rest the once-per-container
+    fetch _get_param gives those four.
+
+    Falls back rather than raises, and caches the fallback so a parameter that is
+    not there is not re-fetched per message. A user with no key of their own -
+    Gilbert has a RING_USERS entry and no MONDAY_USERS one - or a parameter never
+    put in SSM should cost an update the right name, not the update.
+    """
+    env_var_name = (MONDAY_USERS.get(str(monday_user_id)) or {}).get("api_key")
+    if not env_var_name:
+        logger.warning("No monday key for user %s, writing as Jeff Bot",
+                       monday_user_id)
+        return JEFF_BOT_MONDAY_API_KEY
+    if env_var_name == JEFF_BOT:
+        return JEFF_BOT_MONDAY_API_KEY
+
+    try:
+        return os.environ[env_var_name] if LOCAL_TESTING else _get_param(env_var_name)
+    except Exception:
+        logger.exception("Monday key %s unavailable, writing as Jeff Bot",
+                         env_var_name)
+        return JEFF_BOT_MONDAY_API_KEY

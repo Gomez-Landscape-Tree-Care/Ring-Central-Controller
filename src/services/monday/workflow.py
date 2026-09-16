@@ -65,7 +65,8 @@ def process_create_update(event):
         timestamp=trigger_time(event),
         author_id=str(event.get("userId") or ""),
         op=f"Text update {update_id} to {phone}",
-        skip_board=board)
+        skip_board=board,
+        message_type='human')
 
 
 def trigger_time(event) -> datetime:

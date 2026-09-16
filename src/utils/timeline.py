@@ -2,6 +2,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from logger_config import logger
+from config import MONDAY_USERS
 
 _DIVIDER = "-" * 40
 _PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -79,3 +80,74 @@ def render_timeline(rows: list[tuple[str, datetime]]) -> str:
         length += len(chunk)
         prev_date = date
     return "".join(parts).strip()
+
+def _sender(author_id: str) -> str:
+    return MONDAY_USERS.get(author_id, {}).get('informal_name', 'Someone')
+
+def determine_timeline_entry(message_type: str, author_id: str) -> str:
+    if message_type == 'human':
+        return sms_timeline_entry(author_id=author_id)
+    if message_type == 'send_follow_up':
+        return follow_up_timeline_entry(author_id=author_id)
+    if message_type == 'send_follow_up_2':
+        return follow_up_two_timeline_entry(author_id=author_id)
+    if message_type == 'request_photos':
+        return request_photos_timeline_entry(author_id=author_id)
+    if message_type == 'send_job_application_english':
+        return english_job_app_timeline_entry(author_id=author_id)
+    if message_type == 'send_job_application_spanish':
+        return spanish_job_app_timeline_entry(author_id=author_id)
+    if message_type == 'invite':
+        return send_invite_link_timeline_entry(author_id=author_id)
+    if message_type == 'onboarding_follow_up':
+        return onboarding_follow_up_timeline_entry()
+    if message_type == 'interview_follow_up':
+        return interview_follow_up_timeline_entry()
+    if message_type == 'send_interview_link':
+        return send_interview_link_timeline_entry(author_id=author_id)
+    if message_type == 'send_onboarding_link':
+        return send_onboarding_link_timeline_entry(author_id=author_id)
+
+    return ''
+
+def sms_timeline_entry(author_id: str) -> str:
+    """The Timeline line for an SMS sent off a board or a CL/AB request.
+
+    An author MONDAY_USERS has no row for is named by nobody rather than by Jeff
+    Bot: the fallback stands in for the name, not for the person, and crediting
+    somebody else's text to the bot is worse than leaving it unattributed.
+    """
+    return f"{_sender(author_id=author_id)} sent a text message"
+
+def forward_timeline_entry(author_id: str, recipient_names: list[str]) -> str:
+    return f'{_sender(author_id=author_id)} forwarded to {', '.join(recipient_names)}'
+
+def follow_up_timeline_entry(author_id: str) -> str:
+    return f'Send follow up message by {_sender(author_id=author_id)}'
+
+def follow_up_two_timeline_entry(author_id: str) -> str:
+    return f'Send follow up message-2 by {_sender(author_id=author_id)}'
+
+def request_photos_timeline_entry(author_id: str) -> str:
+    return f'Request photos by {_sender(author_id=author_id)}'
+
+def english_job_app_timeline_entry(author_id: str) -> str:
+    return f'Send job application (English) by {_sender(author_id=author_id)}'
+
+def spanish_job_app_timeline_entry(author_id: str) -> str:
+    return f'Send job application (Spanish) by {_sender(author_id=author_id)}'
+
+def send_invite_link_timeline_entry(author_id: str) -> str:
+    return f'Send Invite Link by {_sender(author_id=author_id)}'
+
+def onboarding_follow_up_timeline_entry() -> str:
+    return 'Sent onboarding follow up message'
+
+def interview_follow_up_timeline_entry() -> str:
+    return 'Sent interview follow up message'
+
+def send_interview_link_timeline_entry(author_id: str) -> str:
+    return f'{_sender(author_id=author_id)} sent interview link'
+
+def send_onboarding_link_timeline_entry(author_id: str) -> str:
+    return f'{_sender(author_id=author_id)} sent onboarding link'

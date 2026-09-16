@@ -116,7 +116,7 @@ Resources:
       ContentBasedDeduplication: false
       DeduplicationScope: messageGroup
       FifoThroughputLimit: perMessageGroupId
-      VisibilityTimeout: 720
+      VisibilityTimeout: 120
       MessageRetentionPeriod: 345600
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt RingCentralEventDLQ.Arn

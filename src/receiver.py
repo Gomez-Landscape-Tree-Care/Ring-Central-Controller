@@ -183,33 +183,30 @@ def _handle_monday(payload):
 
 
 def _handle_send_request(payload, source):
-    """One text the AB or CL Lambda wants sent, on its way to the queue.
+    """Texts the AB or CL Lambda wants sent, on its way to the queue.
 
     Answers 200 either way. The caller is a Lambda, not a person: a 4xx buys it
     nothing it can act on, and a retry against a send endpoint is the one thing
     worth not encouraging.
-
-    The phone is normalized here rather than past the queue because this is
-    where it can still be refused - it is also the group id, and an unnormalized
-    one would put two spellings of the same person in two groups that no longer
-    order against each other.
     """
-    phone = normalize_phone_with_plus(payload.get("phone"))
-    message = (payload.get("message") or "").strip()
-    if not phone or not message:
+    recipients = payload['recipients']
+    message = payload["message"]
+    message_type = payload['message_type']
+    if not recipients or not message:
         logger.info("Ignoring %s send request with no %s", source,
-                    "usable phone" if not phone else "message")
+                    "recipients" if not recipients else "message")
         return response(200, {"ok": True})
 
     body = {
-        "phone": phone,
+        "recipients": recipients,
         "message": message,
         "monday_user_id": payload.get("monday_user_id"),
+        "message_type": message_type
     }
     # The person is what has to stay ordered, the way the item is on the monday
     # path. Deduplication is off for the same reason it is there: the callers
     # send no idempotency token, so a repeated request is a repeated text.
-    _enqueue(body, _fifo_id(phone), str(uuid.uuid4()), source)
+    _enqueue(body, 'send_request', str(uuid.uuid4()), source)
 
     return response(200, {"ok": True})
 

@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 from functools import lru_cache
 
-from config import AB_BOARD_ID, CL_BOARD_ID, TEST_PHONE
+from config import (AB_BOARD_ID, CL_BOARD_ID, JEFF_BOT_USER_ID, MONDAY_USERS,
+                    TEST_PHONE)
 from logger_config import logger
 from services.monday.column_ids import ABColIds, CLColIds
 from services.monday.model import MondayModel
@@ -169,17 +170,28 @@ class MondayController:
             logger.exception("%s name lookup failed for item %s", board.label, item_id)
             return None
 
-    def create_update(self, board: Board, item_id: str, body: str) -> str | None:
-        """Post `body` on one item's Updates section.
+    def create_update(self, board: Board, item_id: str, body: str,
+                      monday_user_id: str = JEFF_BOT_USER_ID) -> str | None:
+        """Post `body` on one item's Updates section, as `monday_user_id`.
 
         Updates in Monday represent text messages for this automation. Answers
         the new update's id so a caller can hang a photo off it, and None when
         the write fails, which means there is nothing to attach to.
+
+        The author rides in as an id rather than a key so nothing above the model
+        handles token material; who that id resolves to is config.monday_api_key's
+        to settle, down to the Jeff Bot fallback for a user holding no key.
+
+        Named in `op` because that string is what CloudWatch shows and what the
+        RuntimeError request raises carries, and "as Vig" is the difference
+        between a write that failed and one whose key is the wrong one.
         """
+        author = (MONDAY_USERS.get(str(monday_user_id)) or {}).get(
+            "informal_name", monday_user_id)
         try:
             return self.client.create_update(
-                item_id=item_id, body=body,
-                op=f"Update {board.label} item {item_id}")
+                item_id=item_id, body=body, monday_user_id=monday_user_id,
+                op=f"Update {board.label} item {item_id} as {author}")
         except Exception:
             logger.exception("%s update failed for item %s", board.label, item_id)
         return None

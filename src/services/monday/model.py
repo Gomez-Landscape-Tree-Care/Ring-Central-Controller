@@ -8,8 +8,10 @@ from services.monday import queries
 
 from config import (
     JEFF_BOT_MONDAY_API_KEY,
+    JEFF_BOT_USER_ID,
     MONDAY_API_URL,
     MONDAY_FILE_URL,
+    monday_api_key,
 )
 
 TIMEOUT = 60
@@ -65,15 +67,18 @@ class MondayModel:
     # Transport
     # ----------------------------------------------------------------------
 
-    def request(self, query: str, op: str = "", files: dict | None = None) -> dict:
+    def request(self, query: str, op: str = "", files: dict | None = None,
+                api_key: str | None = None) -> dict:
         """Execute a Monday.com GraphQL request and return payload["data"].
 
         Retries transient failures, then re-raises with `op` named so the alert
         in lambda_handler says which call failed.
+
+        `api_key` overrides this client's own for the one request - see _execute.
         """
         try:
             logger.info(op)
-            return self._execute(query, files)
+            return self._execute(query, files, api_key)
         except Exception as e:
             where = f" [{op}]" if op else ""
             logger.exception(f'Monday Error{where}: {e}\nQuery: {query}')
@@ -82,9 +87,17 @@ class MondayModel:
             raise
 
     @retry(wait=_wait_monday, stop=stop_after_attempt(3), reraise=True)
-    def _execute(self, query: str, files: dict | None = None) -> dict:
+    def _execute(self, query: str, files: dict | None = None,
+                 api_key: str | None = None) -> dict:
         """Post the GraphQL request and return payload["data"], raising on errors.
+
+        `api_key` is per-request rather than per-client because it is the author
+        of one mutation rather than a second identity: requests lays a request's
+        headers over the session's, so one pooled connection serves every user
+        this writes as. None leaves the session's own key in charge.
         """
+        headers = {"Authorization": api_key} if api_key else None
+
         if files:
             # The GraphQL multipart request spec: the mutation travels in `query`,
             # `map` points a form part at the mutation's $file variable, and that
@@ -93,12 +106,14 @@ class MondayModel:
                 MONDAY_FILE_URL,
                 data={"query": query, "map": json.dumps({"image": "variables.file"})},
                 files=files,
+                headers=headers,
                 timeout=self._timeout,
             )
         else:
             response = self._session.post(
                 self._url,
                 json={"query": query},
+                headers=headers,
                 timeout=self._timeout,
             )
 
@@ -146,16 +161,24 @@ class MondayModel:
             raise RuntimeError(f"{field} returned no id{f' [{op}]' if op else ''}: {data!r}")
         return str(item_id)
 
-    def create_update(self, item_id: str, body: str, op: str = "") -> str:
+    def create_update(self, item_id: str, body: str, op: str = "",
+                      monday_user_id: str = JEFF_BOT_USER_ID) -> str:
         """Post an update on an item's Updates section and return the update id.
 
-        Authored by whoever this client's token belongs to - Monday attributes an
-        update to the account that wrote it, which is why the caller may hand this
-        one a key other than Jeff Bot's.
+        Authored by whoever `monday_user_id` names - Monday attributes an update
+        to the account that wrote it and takes no author of its own on the
+        mutation, so writing as somebody is writing with their key.
+
+        The default resolves to no key at all rather than to Jeff Bot's: that
+        leaves this client's own in charge, so a MondayModel built with some other
+        token still writes as that token rather than having it quietly ignored.
         """
+        api_key = (None if str(monday_user_id) == JEFF_BOT_USER_ID
+                   else monday_api_key(monday_user_id))
         data = self.request(
             queries.create_update(item_id=str(item_id), body=body),
             op=op,
+            api_key=api_key,
         )
         return self._created_id(data, "create_update", op)
 
