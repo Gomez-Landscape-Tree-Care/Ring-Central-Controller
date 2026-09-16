@@ -30,7 +30,9 @@ INBOUND_SMS_PATH = "/sms/inbound"
 OUTBOUND_SMS_PATH = "/sms/outbound"
 CALLS_PATH = '/calls'
 
-SEND_PATHS = {"/ab": sources.AB, "/cl": sources.CL}
+SEND_PATHS = {"/ab": sources.AB, 
+              #"/cl": sources.CL
+            }
 
 # FIFO ids take alphanumerics and punctuation, up to 128 characters.
 FIFO_ID_MAX_CHARS = 128

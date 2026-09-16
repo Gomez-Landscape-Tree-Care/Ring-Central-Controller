@@ -104,9 +104,6 @@ class MondayController:
         A phone outside the rollout resolves to no boards, which leaves the
         callers nothing to write to and nothing to guard.
         """
-        if phone != TEST_PHONE:
-            return []
-
         match_key = normalize_phone(phone)
         if not match_key:
             logger.info("Unusable phone %s, skipping board lookups", phone)
