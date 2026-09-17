@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from dataclasses import dataclass
 
-from config import TEST_PHONE
 from logger_config import logger
 from services.slash.model import SlashModel
 
@@ -60,9 +59,6 @@ class SlashController:
         rebuilding the Timeline column from it, so a swallowed failure would put
         a line on the board that Slash does not have.
         """
-        if phone != TEST_PHONE:
-            return None
-
         self._model.create_timeline_entry(
             phone=phone, entry=entry, entry_type=entry_type,
             timestamp=timestamp, outbound=outbound)
@@ -73,9 +69,6 @@ class SlashController:
     def create_text_message(self, phone: str, text: str, timestamp: datetime,
                             outbound: bool, monday_user_id: str | None = None) -> None:
         """Keep one SMS, in whichever direction it went, against the person it belongs to."""
-        if phone != TEST_PHONE:
-            return None
-
         self._model.create_text_message(
             phone=phone, text=text, outbound=outbound,
             monday_user_id=monday_user_id, timestamp=timestamp)

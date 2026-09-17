@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from functools import lru_cache
 
-from config import (AB_BOARD_ID, CL_BOARD_ID, JEFF_BOT_USER_ID, MONDAY_USERS,
-                    TEST_PHONE)
+from config import (AB_BOARD_ID, CL_BOARD_ID, JEFF_BOT_USER_ID, MONDAY_USERS)
 from logger_config import logger
 from services.monday.column_ids import ABColIds, CLColIds
 from services.monday.model import MondayModel
@@ -125,11 +124,6 @@ class MondayController:
 
         The board comes in for the reason update_columns' does: a phone column
         belongs to a board, so an item id on its own does not say where to read.
-
-        Normalized here rather than by the caller because the column holds
-        whatever an agent typed, and everything done with this answer wants the
-        one form: TEST_PHONE is compared against it, RingCentral sends to it, and
-        Slash keys on it.
 
         Raises where _find_item_id swallows, and the difference is what has
         happened by the time each runs: this is the first call the handler makes,

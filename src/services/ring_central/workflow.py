@@ -8,8 +8,9 @@ wire and then writes it down the same way.
 from datetime import datetime, timezone
 
 import ledger
-from config import (JEFF_BOT_USER_ID, MAIN_COMPANY_LINE, MONDAY_USERS,
-                    RING_USERS, SELF_AUTHORED_UPDATE_MARKER, TEST_PHONE)
+from config import (JEFF_BOT_USER_ID, MAIN_COMPANY_LINE,
+                    RING_USERS, SELF_AUTHORED_UPDATE_MARKER,
+                    CL_BOARD_ID)
 from logger_config import logger
 from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
@@ -17,7 +18,7 @@ from services.ring_central.model import MAX_SMS_CHARS
 from services.slash.controller import get_controller as get_slash_controller
 from utils.date import internal_timestamp
 from utils.normalize import normalize_phone_with_plus
-from utils.timeline import render_timeline, determine_timeline_entry, forward_timeline_entry, sms_timeline_entry
+from utils.timeline import render_timeline, determine_timeline_entry, forward_timeline_entry, sms_timeline_entry, quote_timeline_entry
 
 # An MMS carries its own body as a text/plain part, and can carry a vCard or a
 # voice clip next to the photos. Only the images are worth putting on a board.
@@ -132,22 +133,16 @@ def record_sms(message):
         return message
 
     phone = message['phone']
-    if phone != TEST_PHONE:
-        return message
-
     outbound = message['outbound']
     timestamp = datetime.fromisoformat(message['creation_time'])
 
-    # Up front, once: the updates below and the Timeline column rebuild write to
-    # the same two items, and resolve_items is the board search both would
-    # otherwise pay for separately.
     monday = get_monday_controller()
     items = monday.resolve_items(phone)
 
-    # if text:
-    #     get_slash_controller().create_text_message(
-    #         phone=phone, text=text, timestamp=timestamp, outbound=outbound,
-    #         monday_user_id=JEFF_BOT_USER_ID if outbound else None)
+    if text:
+        get_slash_controller().create_text_message(
+            phone=phone, text=text, timestamp=timestamp, outbound=outbound,
+            monday_user_id=JEFF_BOT_USER_ID if outbound else None)
 
     # Fetched once, before the updates are written, so the body can say what the
     # updates actually carry rather than what the message claimed to have. Both
@@ -164,16 +159,16 @@ def record_sms(message):
                 update_id=update_id, filename=photo.filename,
                 content=photo.content, content_type=photo.content_type)
 
-    # if outbound:
-    #     get_slash_controller().create_timeline_entry(
-    #         phone=phone,
-    #         entry=sms_timeline_entry(JEFF_BOT_USER_ID),
-    #         entry_type=SMS_ENTRY_TYPE,
-    #         timestamp=timestamp,
-    #         outbound=True)
+    if outbound:
+        get_slash_controller().create_timeline_entry(
+            phone=phone,
+            entry=sms_timeline_entry(JEFF_BOT_USER_ID),
+            entry_type=SMS_ENTRY_TYPE,
+            timestamp=timestamp,
+            outbound=True)
         process_items(phone, items)
     else:
-        process_items(phone=phone, items=items, forward=False, outbound=False)
+        process_items(phone=phone, items=items, indirect=False, outbound=False)
 
     return message
 
@@ -194,21 +189,21 @@ def process_send_request(payload, source):
     text = payload['message']
     message_type = payload['message_type']
     author_id = str(payload.get('monday_user_id') or '')
+    client_phone = payload['client_phone']
     if not recipients or not text:
         logger.info("%s send request carries no %s", source,
                     "phone" if not recipients else "message")
         return None
 
     if message_type == 'forward':
-        client_phone = payload['client_phone']
-        return process_forward(recipients=recipients, text=text, client_phone=client_phone)
+        return process_forward(recipients=recipients, text=text, client_phone=client_phone, author_id=author_id)
 
     phone = normalize_phone_with_plus(recipients[0]['phone'])
     if not phone:
         return None
 
     if message_type == 'quote':
-        return process_quote_requested(phone=phone, text=text)
+        return process_quote_requested(phone=phone, text=text, client_phone=client_phone)
 
     return send_and_record(
         phone, text,
@@ -217,11 +212,22 @@ def process_send_request(payload, source):
         op=f"Text {source} request to {phone}",
         message_type=message_type)
 
-def process_quote_requested (phone: str, text: str):
+def process_quote_requested(phone: str, text: str, client_phone: str):
     RingCentralController().send_sms(text=text, to_number=phone)
+
+    get_slash_controller().create_timeline_entry(
+        phone=client_phone,
+        entry=quote_timeline_entry(),
+        timestamp=datetime.now(timezone.utc),
+        outbound=True,
+        entry_type=SMS_ENTRY_TYPE
+    )
+
+    items = get_monday_controller().resolve_items(phone=client_phone)
+    process_items(phone=client_phone, items=items, indirect=True)
     return None
 
-def process_forward(recipients: dict, text: str, client_phone: str):
+def process_forward(recipients: dict, text: str, client_phone: str, author_id: str):
     monday = get_monday_controller()
     items = monday.resolve_items(client_phone)
     if not items:
@@ -245,19 +251,19 @@ def process_forward(recipients: dict, text: str, client_phone: str):
         RingCentralController().send_sms(text=text, to_number=phone, op=f'Sent text to {phone}')
         recipient_names.append(name)
 
-    # slash = get_slash_controller()
+    slash = get_slash_controller()
 
-    # try:
-    #     slash.create_timeline_entry(
-    #         phone=client_phone,
-    #         entry=forward_timeline_entry(author_id, recipient_names=recipient_names),
-    #         entry_type=SMS_ENTRY_TYPE,
-    #         timestamp=datetime.now(timezone.utc),
-    #         outbound=True)
-    # except Exception:
-    #     logger.exception("Slash timeline entry failed for %s, already sent", client_phone)
+    try:
+        slash.create_timeline_entry(
+            phone=client_phone,
+            entry=forward_timeline_entry(author_id, recipient_names=recipient_names),
+            entry_type=SMS_ENTRY_TYPE,
+            timestamp=datetime.now(timezone.utc),
+            outbound=True)
+    except Exception:
+        logger.exception("Slash timeline entry failed for %s, already sent", client_phone)
 
-    process_items(phone=client_phone, items=items, forward=True)
+    process_items(phone=client_phone, items=items, indirect=True)
     return None
 
 
@@ -294,23 +300,23 @@ def send_and_record(phone: str, text: str, *, timestamp, author_id, op="", skip_
 
     RingCentralController().send_sms(text=text, to_number=phone, op=op)
 
-    # slash = get_slash_controller()
-    # try:
-    #     slash.create_text_message(
-    #         phone=phone, text=text, timestamp=timestamp, outbound=True,
-    #         monday_user_id=author_id)
-    # except Exception:
-    #     logger.exception("Slash message failed for %s, already sent", phone)
+    slash = get_slash_controller()
+    try:
+        slash.create_text_message(
+            phone=phone, text=text, timestamp=timestamp, outbound=True,
+            monday_user_id=author_id)
+    except Exception:
+        logger.exception("Slash message failed for %s, already sent", phone)
 
-    # try:
-    #     slash.create_timeline_entry(
-    #         phone=phone,
-    #         entry=determine_timeline_entry(message_type=message_type, author_id=author_id),
-    #         entry_type=SMS_ENTRY_TYPE,
-    #         timestamp=timestamp,
-    #         outbound=True)
-    # except Exception:
-    #     logger.exception("Slash timeline entry failed for %s, already sent", phone)
+    try:
+        slash.create_timeline_entry(
+            phone=phone,
+            entry=determine_timeline_entry(message_type=message_type, author_id=author_id),
+            entry_type=SMS_ENTRY_TYPE,
+            timestamp=timestamp,
+            outbound=True)
+    except Exception:
+        logger.exception("Slash timeline entry failed for %s, already sent", phone)
 
     process_items(phone, items)
 
@@ -322,45 +328,34 @@ def send_and_record(phone: str, text: str, *, timestamp, author_id, op="", skip_
     return None
 
 
-def process_items(phone, items, forward=False, outbound=True) -> None:
-    """Re-render the Timeline column on each of `items` from what Slash holds.
+def process_items(phone, items, indirect=False, outbound=True) -> None:
+    """Re-render Timeline, set Output, and clear Automations columns on each of `items` from what Slash holds.
 
-    Read back rather than appended to: Slash is the record this service and both
-    board automations write to, so rebuilding is what puts the other two's
-    entries on a column this one is touching, and what lets entries drop off the
-    old end once the column runs past its cap. The entry for this very message
-    was written a moment ago, so it comes back in the read.
-
-    Fails closed. A read that raises and a person Slash has no entries for both
-    write nothing: a rebuild replaces the whole column, so rendering an empty
-    one over a real history is worse than leaving it a line stale - and since
-    every caller records its entry first, no entries means something is wrong
-    rather than that there is nothing to say.
-
-    The read is swallowed where create_timeline_entry above it is not. By the
-    time this runs the entry is safely in Slash and the boards are only behind,
-    so a raise would buy a retry that appends a second copy of everything
-    record_sms has already written.
+    Keyword arguments:
+    phone -- the phone to query the items by
+    items -- the items to process
+    indirect -- whether or not the sms is supposed to be sent to the client
+    outbound -- sms direction
     """
     if not items:
         return None
 
-    # try:
-    #     entries = get_slash_controller().timeline_entries(phone)
-    # except Exception:
-    #     logger.exception("Timeline read failed for %s, columns left alone", phone)
-    #     return None
+    try:
+        entries = get_slash_controller().timeline_entries(phone)
+    except Exception:
+        logger.exception("Timeline read failed for %s, columns left alone", phone)
+        return None
 
-    # if not entries:
-    #     logger.warning("Slash holds no timeline entries for %s, columns left alone", phone)
-    #     return None
+    if not entries:
+        logger.warning("Slash holds no timeline entries for %s, columns left alone", phone)
+        return None
 
-    # column = render_timeline([(entry.entry, entry.timestamp) for entry in entries])
+    column = render_timeline([(entry.entry, entry.timestamp) for entry in entries])
     monday = get_monday_controller()
     for board, item_id in items:
-        # values = {board.timeline_column: {"text": column}}
+        values = {board.timeline_column: {"text": column}}
         values = {}
-        if not forward:
+        if not indirect:
             values[board.output_column] = {"label": board.outputs.unread_text}
             if outbound:
                 values[board.output_column] = {"label": board.outputs.text_sent}
@@ -501,26 +496,18 @@ def process_calls(event):
         logger.info("No usable other party on session %s", session['session_id'])
         return None
 
-    # Ahead of the board search rather than left to the gates inside
-    # resolve_items and the Slash controller: those keep the writes from
-    # happening, where this keeps the reads from being paid for.
-    if phone != TEST_PHONE:
-        logger.info("%s is outside the rollout, leaving session %s off the boards",
-                    phone, session['session_id'])
-        return None
-
     monday = get_monday_controller()
     items = monday.resolve_items(phone)
     entry = call_entry(party, ring_user, monday, items)
 
     # Unstamped, as every entry Slash holds is: render_timeline stamps each line
     # from the row's own timestamp.
-    # get_slash_controller().create_timeline_entry(
-    #     phone=phone,
-    #     entry=entry,
-    #     entry_type=CALL_ENTRY_TYPE,
-    #     timestamp=event_time(session),
-    #     outbound=outbound)
+    get_slash_controller().create_timeline_entry(
+        phone=phone,
+        entry=entry,
+        entry_type=CALL_ENTRY_TYPE,
+        timestamp=event_time(session),
+        outbound=outbound)
     process_items(phone, items)
     return session
 
@@ -571,14 +558,14 @@ def call_entry(party, ring_user, monday, items) -> str:
     if not party['outbound']:
         if party['status'] == ANSWERED:
             return f"{name} answered"
-        caller = (board_name(monday, items) or party['caller_name']
+        caller = (item_name(monday, items) or party['caller_name']
                   or party['phone'])
         return f"{caller} is calling {name}"
 
-    return f"{name} is calling {board_name(monday, items) or party['phone']}"
+    return f"{name} is calling {item_name(monday, items) or party['phone']}"
 
 
-def board_name(monday, items) -> str | None:
+def item_name(monday, items) -> str | None:
     """The name on the first item `phone` resolved to, or None if there is none.
 
     Read off one board rather than every one: the items are the same person on
