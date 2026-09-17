@@ -201,11 +201,14 @@ def process_send_request(payload, source):
 
     if message_type == 'forward':
         client_phone = payload['client_phone']
-        return process_forward(recipients=recipients, text=text, author_id=author_id, client_phone=client_phone)
+        return process_forward(recipients=recipients, text=text, client_phone=client_phone)
 
     phone = normalize_phone_with_plus(recipients[0]['phone'])
     if not phone:
         return None
+
+    if message_type == 'quote':
+        return process_quote_requested(phone=phone, text=text)
 
     return send_and_record(
         phone, text,
@@ -214,7 +217,11 @@ def process_send_request(payload, source):
         op=f"Text {source} request to {phone}",
         message_type=message_type)
 
-def process_forward(recipients: dict, text: str, author_id: str, client_phone: str):
+def process_quote_requested (phone: str, text: str):
+    RingCentralController().send_sms(text=text, to_number=phone)
+    return None
+
+def process_forward(recipients: dict, text: str, client_phone: str):
     monday = get_monday_controller()
     items = monday.resolve_items(client_phone)
     if not items:
@@ -224,9 +231,9 @@ def process_forward(recipients: dict, text: str, author_id: str, client_phone: s
     for recipient in recipients:
         phone = normalize_phone_with_plus(recipient['phone'])
         name = recipient['name']
-        if phone != TEST_PHONE:
-            logger.info("%s is outside the rollout, leaving the text unsent", phone)
-            return None
+
+        if not phone:
+            continue
         
         # Cut here rather than leaving it to the model's own slice, so the Slash row
         # and the board updates carry what went on the wire rather than what was asked.

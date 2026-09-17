@@ -30,8 +30,9 @@ INBOUND_SMS_PATH = "/sms/inbound"
 OUTBOUND_SMS_PATH = "/sms/outbound"
 CALLS_PATH = '/calls'
 
-SEND_PATHS = {"/ab": sources.AB, 
-              #"/cl": sources.CL
+SEND_PATHS = {
+                "/ab": sources.AB, 
+                "/cl": sources.CL
             }
 
 # FIFO ids take alphanumerics and punctuation, up to 128 characters.
@@ -203,7 +204,8 @@ def _handle_send_request(payload, source):
         "recipients": recipients,
         "message": message,
         "monday_user_id": payload.get("monday_user_id"),
-        "message_type": message_type
+        "message_type": message_type,
+        "client_phone": payload.get("client_phone")
     }
     # The person is what has to stay ordered, the way the item is on the monday
     # path. Deduplication is off for the same reason it is there: the callers

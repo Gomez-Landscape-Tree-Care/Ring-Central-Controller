@@ -107,6 +107,8 @@ def determine_timeline_entry(message_type: str, author_id: str) -> str:
         return send_interview_link_timeline_entry(author_id=author_id)
     if message_type == 'send_onboarding_link':
         return send_onboarding_link_timeline_entry(author_id=author_id)
+    if message_type == 'quote':
+        return quote_timeline_entry()
 
     return ''
 
@@ -151,3 +153,6 @@ def send_interview_link_timeline_entry(author_id: str) -> str:
 
 def send_onboarding_link_timeline_entry(author_id: str) -> str:
     return f'{_sender(author_id=author_id)} sent onboarding link'
+
+def quote_timeline_entry() -> str:
+    return 'Client requested a quote'
