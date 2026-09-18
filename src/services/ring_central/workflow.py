@@ -170,7 +170,7 @@ def record_sms(message):
             outbound=True)
         process_items(phone, items)
     else:
-        process_items(phone=phone, items=items, indirect=False, outbound=False)
+        process_items(phone=phone, items=items, output=True, outbound=False)
 
     return message
 
@@ -233,7 +233,7 @@ def process_quote_requested(phone: str, text: str, client_phone: str):
         entry_type=SMS_ENTRY_TYPE
     )
 
-    process_items(phone=client_phone, items=resolution.items, indirect=True)
+    process_items(phone=client_phone, items=resolution.items, output=False)
     return None
 
 def process_forward(recipients: dict, text: str, client_phone: str, author_id: str):
@@ -277,7 +277,7 @@ def process_forward(recipients: dict, text: str, client_phone: str, author_id: s
     except Exception:
         logger.exception("Slash timeline entry failed for %s, already sent", client_phone)
 
-    process_items(phone=client_phone, items=items, indirect=True)
+    process_items(phone=client_phone, items=items, output=False)
     return None
 
 
@@ -346,13 +346,13 @@ def send_and_record(phone: str, text: str, *, timestamp, author_id, op="", skip_
     return None
 
 
-def process_items(phone, items, indirect=False, outbound=True) -> None:
+def process_items(phone, items, output=True, outbound=True) -> None:
     """Re-render Timeline, set Output, and clear Automations columns on each of `items` from what Slash holds.
 
     Keyword arguments:
     phone -- the phone to query the items by
     items -- the items to process
-    indirect -- whether or not the sms is supposed to be sent to the client
+    output -- whether or not to update the client output column
     outbound -- sms direction
     """
     if not items:
@@ -372,7 +372,7 @@ def process_items(phone, items, indirect=False, outbound=True) -> None:
     monday = get_monday_controller()
     for board, item_id in items:
         values = {board.timeline_column: {"text": column}}
-        if not indirect:
+        if output:
             values[board.output_column] = {"label": board.outputs.unread_text}
             if outbound:
                 values[board.output_column] = {"label": board.outputs.text_sent}
@@ -515,7 +515,7 @@ def process_calls(event):
 
     monday = get_monday_controller()
     items = monday.resolve_items(phone).items
-    
+
     if not items:
         return session
     entry = call_entry(party, ring_user, monday, items)
@@ -528,7 +528,7 @@ def process_calls(event):
         entry_type=CALL_ENTRY_TYPE,
         timestamp=event_time(session),
         outbound=outbound)
-    process_items(phone, items)
+    process_items(phone, items, False)
     return session
 
 
