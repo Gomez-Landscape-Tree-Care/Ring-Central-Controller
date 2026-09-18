@@ -9,8 +9,7 @@ from datetime import datetime, timezone
 
 import ledger
 from config import (JEFF_BOT_USER_ID, MAIN_COMPANY_LINE,
-                    RING_USERS, SELF_AUTHORED_UPDATE_MARKER,
-                    CL_BOARD_ID)
+                    RING_USERS, SELF_AUTHORED_UPDATE_MARKER)
 from logger_config import logger
 from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
@@ -137,7 +136,10 @@ def record_sms(message):
     timestamp = datetime.fromisoformat(message['creation_time'])
 
     monday = get_monday_controller()
-    items = monday.resolve_items(phone)
+    items = monday.resolve_items(phone).items
+
+    if not items:
+        return message
 
     if text:
         get_slash_controller().create_text_message(
@@ -213,6 +215,14 @@ def process_send_request(payload, source):
         message_type=message_type)
 
 def process_quote_requested(phone: str, text: str, client_phone: str):
+    # Resolved before the send rather than after it, unlike the order this used
+    # to run in: the quote goes to a third party but it is the client's business,
+    # so a blacklisted client is one nothing goes out about.
+    resolution = get_monday_controller().resolve_items(phone=client_phone)
+    if resolution.blacklisted:
+        logger.info("%s is blacklisted, not quoting to %s", client_phone, phone)
+        return None
+
     RingCentralController().send_sms(text=text, to_number=phone)
 
     get_slash_controller().create_timeline_entry(
@@ -223,13 +233,17 @@ def process_quote_requested(phone: str, text: str, client_phone: str):
         entry_type=SMS_ENTRY_TYPE
     )
 
-    items = get_monday_controller().resolve_items(phone=client_phone)
-    process_items(phone=client_phone, items=items, indirect=True)
+    process_items(phone=client_phone, items=resolution.items, indirect=True)
     return None
 
 def process_forward(recipients: dict, text: str, client_phone: str, author_id: str):
     monday = get_monday_controller()
-    items = monday.resolve_items(client_phone)
+    resolution = monday.resolve_items(client_phone)
+    if resolution.blacklisted:
+        logger.info("%s is blacklisted, not forwarding", client_phone)
+        return
+
+    items = resolution.items
     if not items:
         return
     
@@ -296,7 +310,11 @@ def send_and_record(phone: str, text: str, *, timestamp, author_id, op="", skip_
     # the updates below write to the same items, and this is the board search
     # they would otherwise pay for separately.
     monday = get_monday_controller()
-    items = monday.resolve_items(phone)
+    resolution = monday.resolve_items(phone)
+    if resolution.blacklisted:
+        logger.info("%s is blacklisted, not sending", phone)
+        return None
+    items = resolution.items
 
     RingCentralController().send_sms(text=text, to_number=phone, op=op)
 
@@ -354,7 +372,6 @@ def process_items(phone, items, indirect=False, outbound=True) -> None:
     monday = get_monday_controller()
     for board, item_id in items:
         values = {board.timeline_column: {"text": column}}
-        values = {}
         if not indirect:
             values[board.output_column] = {"label": board.outputs.unread_text}
             if outbound:
@@ -497,7 +514,10 @@ def process_calls(event):
         return None
 
     monday = get_monday_controller()
-    items = monday.resolve_items(phone)
+    items = monday.resolve_items(phone).items
+    
+    if not items:
+        return session
     entry = call_entry(party, ring_user, monday, items)
 
     # Unstamped, as every entry Slash holds is: render_timeline stamps each line
@@ -524,6 +544,10 @@ def company_line_party(session):
     The other party falls out of the same answer, since it is whichever end the
     main line is not: the caller on an inbound call, the callee on an outbound
     one.
+
+    The tracked extension falls out of it too: RingCentral carries it on the
+    party root on some events and only on the `from`/`to` endpoint on others, so
+    the root is preferred and the company-line end is the fallback.
     """
     for party in session['parties']:
         from_phone = normalize_phone_with_plus(party['from'])
@@ -539,6 +563,9 @@ def company_line_party(session):
             'outbound': outbound,
             'phone': from_phone if not outbound else to_phone,
             'caller_name': party['from_name'],
+            'extension_id': (party['extension_id']
+                             or (party['from_extension_id'] if outbound
+                                 else party['to_extension_id'])),
         }
     return None
 
@@ -604,6 +631,8 @@ def extract_telephony_fields(event):
             {
                 'id': party.get('id'),
                 'extension_id': str(party.get('extensionId') or ''),
+                'from_extension_id': str((party.get('from') or {}).get('extensionId') or ''),
+                'to_extension_id': str((party.get('to') or {}).get('extensionId') or ''),
                 'direction': party.get('direction'),
                 'status': (party.get('status') or {}).get('code'),
                 'from': (party.get('from') or {}).get('phoneNumber'),

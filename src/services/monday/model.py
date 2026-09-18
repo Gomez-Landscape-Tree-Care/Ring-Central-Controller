@@ -215,17 +215,21 @@ class MondayModel:
         )
         return self._created_id(data, "change_multiple_column_values", op)
 
-    def find_item_id_by_phone(self, board_id: int, column_id: str, phone: str,
-                              op: str = "") -> str | None:
-        """The id of the first item on `board_id` matching `phone`, or None if there is none.
+    def find_item_by_phone(self, board_id: int, column_id: str, phone: str,
+                           op: str = "") -> tuple[str, str] | None:
+        """The (id, group id) of the first item on `board_id` matching `phone`, or None.
 
         A response without a `boards` list is an error rather than a miss:
         returning None there would answer "this number is not on the board" every
         time Monday hiccups, and the caller uses that answer to decide whether to
         write at all.
+
+        A missing group is an empty string rather than an error, unlike a missing
+        id: the group only decides whether the item is skipped, so an item that
+        arrives without one is still an item to write to.
         """
         data = self.request(
-            queries.find_item_id_by_phone(
+            queries.find_item_by_phone(
                 board_id=board_id, column_id=column_id, phone=phone),
             op=op,
         )
@@ -234,14 +238,16 @@ class MondayModel:
             raise RuntimeError(
                 f"board {board_id} missing from response{f' [{op}]' if op else ''}: {data!r}")
         items = (boards[0].get("items_page") or {}).get("items") or []
-        return str(items[0]["id"]) if items else None
+        if not items:
+            return None
+        return str(items[0]["id"]), str((items[0].get("group") or {}).get("id") or "")
 
     def item_column_text(self, item_id: str, column_id: str,
                          op: str = "") -> str | None:
         """The text of one column on one item, or None when there is nothing in it.
 
         A response without an `items` list is an error rather than an empty
-        column, for find_item_id_by_phone's reason: the caller decides off this
+        column, for find_item_by_phone's reason: the caller decides off this
         answer whether a person gets texted, so a monday hiccup must not read as
         "this item has nothing in that column". An empty list is not an error - a
         deleted item, or one this token cannot see, has no text to give.

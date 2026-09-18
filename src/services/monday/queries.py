@@ -22,12 +22,16 @@ def create_update(item_id: str, body: str) -> str:
     """
 
 
-def find_item_id_by_phone(board_id: int, column_id: str, phone: str) -> str:
-    """The id of the first item on `board_id` whose phone column carries `phone`.
+def find_item_by_phone(board_id: int, column_id: str, phone: str) -> str:
+    """The first item on `board_id` whose phone column carries `phone`, and its group.
 
     `contains_text` rather than `any_of`, mirroring CL's own lookup against this
     board: a 10-digit stored value still matches the 11-digit key. `phone` is
     digits only, so nothing in it needs escaping.
+
+    The group rides along with the id because it is what decides whether the item
+    gets written to at all, and asking for it here is free - a second read to
+    place an item this query has already found would pay twice for one lookup.
     """
     return f"""
         query {{
@@ -44,7 +48,7 @@ def find_item_id_by_phone(board_id: int, column_id: str, phone: str) -> str:
                         ]
                     }}
                 ) {{
-                    items {{ id }}
+                    items {{ id group {{ id }} }}
                 }}
             }}
         }}
@@ -110,7 +114,7 @@ def update_column_values(board_id: int, item_id: str, values: dict) -> str:
 def item_column_text(item_id: str, column_id: str) -> str:
     """The text of one column on one item.
 
-    The lookup find_item_id_by_phone cannot serve: that one searches a board for a
+    The lookup find_item_by_phone cannot serve: that one searches a board for a
     phone, where the create_update webhook arrives naming an item and needing the
     person behind it. A root `items(ids:)` read rather than a board search,
     because the id is already known - searching for it would spend complexity
