@@ -23,15 +23,11 @@ def create_update(item_id: str, body: str) -> str:
 
 
 def find_item_by_phone(board_id: int, column_id: str, phone: str) -> str:
-    """The first item on `board_id` whose phone column carries `phone`, and its group.
+    """The first item on `board_id` whose phone column carries `phone`.
 
     `contains_text` rather than `any_of`, mirroring CL's own lookup against this
     board: a 10-digit stored value still matches the 11-digit key. `phone` is
     digits only, so nothing in it needs escaping.
-
-    The group rides along with the id because it is what decides whether the item
-    gets written to at all, and asking for it here is free - a second read to
-    place an item this query has already found would pay twice for one lookup.
     """
     return f"""
         query {{
@@ -48,7 +44,7 @@ def find_item_by_phone(board_id: int, column_id: str, phone: str) -> str:
                         ]
                     }}
                 ) {{
-                    items {{ id group {{ id }} }}
+                    items {{ id }}
                 }}
             }}
         }}

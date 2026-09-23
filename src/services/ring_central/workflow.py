@@ -137,7 +137,7 @@ def record_sms(message):
     timestamp = datetime.fromisoformat(message['creation_time'])
 
     monday = get_monday_controller()
-    items = monday.resolve_items(phone).items
+    items = monday.resolve_items(phone)
 
     if not items:
         return message
@@ -223,14 +223,6 @@ def process_send_request(payload, source):
         message_type=message_type)
 
 def process_quote_requested(phone: str, text: str, client_phone: str):
-    # Resolved before the send rather than after it, unlike the order this used
-    # to run in: the quote goes to a third party but it is the client's business,
-    # so a blacklisted client is one nothing goes out about.
-    resolution = get_monday_controller().resolve_items(phone=client_phone)
-    if resolution.blacklisted:
-        logger.info("%s is blacklisted, not quoting to %s", client_phone, phone)
-        return None
-
     RingCentralController().send_sms(text=text, to_number=phone)
 
     get_slash_controller().create_timeline_entry(
@@ -241,17 +233,13 @@ def process_quote_requested(phone: str, text: str, client_phone: str):
         entry_type=SMS_ENTRY_TYPE
     )
 
-    process_items(phone=client_phone, items=resolution.items, output=False)
+    items = get_monday_controller().resolve_items(phone=client_phone)
+    process_items(phone=client_phone, items=items, output=False)
     return None
 
 def process_forward(recipients: dict, text: str, client_phone: str, author_id: str):
     monday = get_monday_controller()
-    resolution = monday.resolve_items(client_phone)
-    if resolution.blacklisted:
-        logger.info("%s is blacklisted, not forwarding", client_phone)
-        return
-
-    items = resolution.items
+    items = monday.resolve_items(client_phone)
     if not items:
         return
     
@@ -318,11 +306,7 @@ def send_and_record(phone: str, text: str, *, timestamp, author_id, op="", skip_
     # the updates below write to the same items, and this is the board search
     # they would otherwise pay for separately.
     monday = get_monday_controller()
-    resolution = monday.resolve_items(phone)
-    if resolution.blacklisted:
-        logger.info("%s is blacklisted, not sending", phone)
-        return None
-    items = resolution.items
+    items = monday.resolve_items(phone)
 
     RingCentralController().send_sms(text=text, to_number=phone, op=op)
 
@@ -522,7 +506,7 @@ def process_calls(event):
         return None
 
     monday = get_monday_controller()
-    items = monday.resolve_items(phone).items
+    items = monday.resolve_items(phone)
 
     if not items:
         return session

@@ -4,7 +4,6 @@ from functools import lru_cache
 from config import (AB_BOARD_ID, CL_BOARD_ID, JEFF_BOT_USER_ID, MONDAY_USERS)
 from logger_config import logger
 from services.monday.column_ids import ABColIds, CLColIds
-from services.monday.group_ids import CLGroupIds
 from services.monday.model import MondayModel
 from services.monday.statuses import ABOutputs, CLOutputs
 from utils.normalize import normalize_phone, normalize_phone_with_plus
@@ -27,7 +26,6 @@ class Board:
     outputs: type[ABOutputs | CLOutputs]
     label: str
     automations: str
-    blacklist_group: str | None = None
 
 
 # The two boards spell the same two labels differently - "Text sent" on CL,
@@ -35,8 +33,7 @@ class Board:
 # board carries its own set the way it carries its own column ids.
 CL = Board(id=CL_BOARD_ID, phone_column=CLColIds.phone,
            timeline_column=CLColIds.timeline, output_column=CLColIds.output,
-           outputs=CLOutputs, label="Clients & Leads", automations=CLColIds.automations,
-           blacklist_group=CLGroupIds.blacklist)
+           outputs=CLOutputs, label="Clients & Leads", automations=CLColIds.automations)
 AB = Board(id=AB_BOARD_ID, phone_column=ABColIds.phone,
            timeline_column=ABColIds.timeline, output_column=ABColIds.output,
            outputs=ABOutputs, label="Applicants Board", automations=ABColIds.automations)
@@ -48,20 +45,6 @@ BOARDS = (CL, AB)
 # A webhook names a board by id, where every read and write below needs the
 # column ids that go with it.
 BOARDS_BY_ID = {board.id: board for board in BOARDS}
-
-
-@dataclass(frozen=True)
-class Resolution:
-    """What a phone resolved to: the items to write, and whether it is blacklisted.
-
-    The flag is not what `items` already says. A blacklisted person and a person
-    on no board both leave nothing to write to, but they are opposites at the
-    send: one is somebody this service has never heard of, who an agent may still
-    text, and the other is somebody it has been told to leave alone.
-    """
-
-    items: list[tuple[Board, str]]
-    blacklisted: bool = False
 
 
 def board_for_id(board_id) -> Board | None:
@@ -88,8 +71,8 @@ class MondayController:
     def __init__(self, client: MondayModel = MondayModel()):
         self.client = client
 
-    def _find_item(self, board: Board, match_key: str) -> tuple[str, str] | None:
-        """`board`'s item for an already-normalized phone as (id, group id), or None.
+    def _find_item(self, board: Board, match_key: str) -> str | None:
+        """`board`'s item id for an already-normalized phone, or None.
 
         None covers both ways this gives up, a failed lookup and no such item.
         Those are not two outcomes a caller can act on differently: either way
@@ -107,37 +90,25 @@ class MondayController:
             logger.info("No %s item for %s", board.label, match_key)
         return found
 
-    def resolve_items(self, phone: str) -> Resolution:
+    def resolve_items(self, phone: str) -> list[tuple[Board, str]]:
         """Every board holding an item for `phone`, paired with that item's id.
 
         The one board search a message pays for, resolved up front and handed
         back rather than repeated per write: an SMS posts an update and rebuilds
         the Timeline column on the same item, and finding it twice doubles what
         each message costs against monday's complexity budget.
-
-        The blacklist gate lives here rather than at the writes below, because
-        every one of them needs an item id and this is where item ids come from.
-        A blacklisted person resolves to no boards at all - the other board's
-        item is dropped with them, since the group is a fact about the person
-        rather than about the board that happens to carry the group.
         """
         match_key = normalize_phone(phone)
         if not match_key:
             logger.info("Unusable phone %s, skipping board lookups", phone)
-            return Resolution([])
+            return []
 
         items = []
         for board in BOARDS:
-            found = self._find_item(board, match_key)
-            if not found:
-                continue
-            item_id, group_id = found
-            if board.blacklist_group and group_id == board.blacklist_group:
-                logger.info("%s item %s for %s is blacklisted, skipping every board",
-                            board.label, item_id, match_key)
-                return Resolution([], blacklisted=True)
-            items.append((board, item_id))
-        return Resolution(items)
+            item_id = self._find_item(board, match_key)
+            if item_id:
+                items.append((board, item_id))
+        return items
 
     def item_phone(self, board: Board, item_id: str) -> str | None:
         """The phone on one item, in the +1xxxxxxxxxx form every caller wants.

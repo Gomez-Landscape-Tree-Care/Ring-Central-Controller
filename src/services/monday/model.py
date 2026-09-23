@@ -216,17 +216,13 @@ class MondayModel:
         return self._created_id(data, "change_multiple_column_values", op)
 
     def find_item_by_phone(self, board_id: int, column_id: str, phone: str,
-                           op: str = "") -> tuple[str, str] | None:
-        """The (id, group id) of the first item on `board_id` matching `phone`, or None.
+                           op: str = "") -> str | None:
+        """The id of the first item on `board_id` matching `phone`, or None.
 
         A response without a `boards` list is an error rather than a miss:
         returning None there would answer "this number is not on the board" every
         time Monday hiccups, and the caller uses that answer to decide whether to
         write at all.
-
-        A missing group is an empty string rather than an error, unlike a missing
-        id: the group only decides whether the item is skipped, so an item that
-        arrives without one is still an item to write to.
         """
         data = self.request(
             queries.find_item_by_phone(
@@ -240,7 +236,7 @@ class MondayModel:
         items = (boards[0].get("items_page") or {}).get("items") or []
         if not items:
             return None
-        return str(items[0]["id"]), str((items[0].get("group") or {}).get("id") or "")
+        return str(items[0]["id"])
 
     def item_column_text(self, item_id: str, column_id: str,
                          op: str = "") -> str | None:
