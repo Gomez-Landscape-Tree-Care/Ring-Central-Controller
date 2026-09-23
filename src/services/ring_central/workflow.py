@@ -115,11 +115,6 @@ def record_sms(message):
     is - the same Slash message, the same two board updates, the same photos -
     so both directions run this and differ only in what sms_fields already
     worked out for them.
-
-    The rollout gate is here as well as inside both controllers, and it is the
-    one that matters: this is the copy that runs before download_attachments, so
-    a photo belonging to somebody outside the rollout is never pulled off
-    RingCentral at all.
     """
     text = message['text']
     attachments = message['attachments']
@@ -307,6 +302,9 @@ def send_and_record(phone: str, text: str, *, timestamp, author_id, op="", skip_
     # they would otherwise pay for separately.
     monday = get_monday_controller()
     items = monday.resolve_items(phone)
+
+    if not items:
+        return None
 
     RingCentralController().send_sms(text=text, to_number=phone, op=op)
 
