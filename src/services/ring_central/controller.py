@@ -1,5 +1,5 @@
-import ledger
 from logger_config import logger
+from services.dynamodb import ledger
 from services.ring_central import model as RingCentralModel
 
 class RingCentralController:

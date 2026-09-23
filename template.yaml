@@ -58,11 +58,16 @@ Resources:
           VIG_MONDAY_API_KEY: !Ref VigMondayApiKey
           ANDERSON_MONDAY_API_KEY: !Ref AndersonMondayApiKey
           PROCESSED_MESSAGES_TABLE: !Ref ProcessedMessagesTable
+          PHOTOS_BUCKET: contractors-app-photos-production-273354668284-us-west-1-an
       Policies:
         - SSMParameterReadPolicy:
             ParameterName: ring-central-controller/*
         - DynamoDBCrudPolicy:
             TableName: !Ref ProcessedMessagesTable
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: arn:aws:s3:::contractors-app-photos-production-273354668284-us-west-1-an/text-messages/*
       Events:
         RingCentralEvents:
           Type: SQS

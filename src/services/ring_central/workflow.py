@@ -7,13 +7,14 @@ wire and then writes it down the same way.
 
 from datetime import datetime, timezone
 
-import ledger
 from config import (JEFF_BOT_USER_ID, MAIN_COMPANY_LINE,
                     RING_USERS, SELF_AUTHORED_UPDATE_MARKER)
 from logger_config import logger
+from services.dynamodb import ledger
 from services.monday.controller import get_controller as get_monday_controller
 from services.ring_central.controller import RingCentralController
 from services.ring_central.model import MAX_SMS_CHARS
+from services.s3 import photo_store
 from services.slash.controller import get_controller as get_slash_controller
 from utils.date import internal_timestamp
 from utils.normalize import normalize_phone_with_plus
@@ -151,6 +152,8 @@ def record_sms(message):
     # boards get the same bytes - downloading per board would fetch each photo
     # twice for every message.
     photos = RingCentralController().download_attachments(attachments)
+    if not outbound and photos:
+        photo_store.upload_sms_photos(message['id'], photos)
     body = update_body(text, timestamp, outbound)
 
     update_ids = [monday.create_update(board, item_id, body)
