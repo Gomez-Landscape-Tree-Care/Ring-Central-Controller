@@ -32,6 +32,7 @@ FAILED_STATUSES = ("SendingFailed", "DeliveryFailed")
 
 SMS_ENTRY_TYPE = "sms"
 CALL_ENTRY_TYPE = "call"
+AUTOMATION_ENTRY_TYPE = 'automation'
 
 # The party statuses worth a timeline line. A call passes through Setup,
 # Proceeding, Answered, Disconnected and sometimes Hold or VoiceMail; these two
@@ -218,17 +219,24 @@ def process_send_request(payload, source):
         message_type=message_type)
 
 def process_quote_requested(phone: str, text: str, client_phone: str):
+    items = get_monday_controller().resolve_items(phone=client_phone)
+
+    if not items:
+        return None
+    
     RingCentralController().send_sms(text=text, to_number=phone)
 
-    get_slash_controller().create_timeline_entry(
-        phone=client_phone,
-        entry=quote_timeline_entry(),
-        timestamp=datetime.now(timezone.utc),
-        outbound=True,
-        entry_type=SMS_ENTRY_TYPE
-    )
+    try:
+        get_slash_controller().create_timeline_entry(
+            phone=client_phone,
+            entry=quote_timeline_entry(),
+            timestamp=datetime.now(timezone.utc),
+            outbound=True,
+            entry_type=AUTOMATION_ENTRY_TYPE
+        )
+    except Exception as e:
+        logger.exception(f'Timeline entry write failed for {client_phone} with exception: {e}')
 
-    items = get_monday_controller().resolve_items(phone=client_phone)
     process_items(phone=client_phone, items=items, output=False)
     return None
 
@@ -262,7 +270,7 @@ def process_forward(recipients: dict, text: str, client_phone: str, author_id: s
         slash.create_timeline_entry(
             phone=client_phone,
             entry=forward_timeline_entry(author_id, recipient_names=recipient_names),
-            entry_type=SMS_ENTRY_TYPE,
+            entry_type=AUTOMATION_ENTRY_TYPE,
             timestamp=datetime.now(timezone.utc),
             outbound=True)
     except Exception:

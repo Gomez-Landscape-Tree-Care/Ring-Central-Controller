@@ -27,6 +27,7 @@ RING_USERS: dict[str, dict] = {
     "393708028": {"name": "Gilbert", "monday_user_id": "14382599"},
     "405497028": {"name": "GomezLTC"},
     "663812029": {"name": "Call Queue"},
+    "63784324028": {"name": "Anderson", "monday_user_id": "95263034"}
 }
 CALL_QUEUE_EXTENSION = "663812029"
 RC_CLIENT_ID = "WZPBY9P51XYfyE87ZiCHHS"
