@@ -156,7 +156,7 @@ def record_sms(message):
             monday_user_id=JEFF_BOT_USER_ID if outbound else None)
 
     if photos:
-        stored = photo_store.upload_sms_photos(message['id'], photos)
+        stored = photo_store.upload_sms_photos(message_id, photos)
         if message_id and stored:
             get_slash_controller().create_message_photos(message_id, stored)
     body = update_body(text, timestamp, outbound)
