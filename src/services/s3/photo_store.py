@@ -5,18 +5,22 @@ at import, and this module has to stay importable by anything.
 """
 
 import os
+from typing import TYPE_CHECKING
 
 import boto3
 
 from logger_config import logger
+
+if TYPE_CHECKING:
+    from services.ring_central.model import Attachment
 
 KEY_PREFIX = "text-messages"
 
 s3 = boto3.client("s3")
 
 
-def upload_sms_photos(message_id, photos) -> list[str]:
-    """Put each downloaded photo under text-messages/{message_id}/, answering the keys written.
+def upload_sms_photos(message_id, photos: list["Attachment"]) -> list[tuple[str, str]]:
+    """Put each downloaded photo under text-messages/{message_id}/, answering (key, content_type) for each written.
 
     Best effort per photo, like download_attachments: the monday updates are the
     record, and a failed copy must not cost the message or its neighbours.
@@ -31,7 +35,7 @@ def upload_sms_photos(message_id, photos) -> list[str]:
                 Body=photo.content,
                 ContentType=photo.content_type,
             )
-            keys.append(key)
+            keys.append((key, photo.content_type))
         except Exception:
             logger.exception("Could not upload photo %s", key)
 

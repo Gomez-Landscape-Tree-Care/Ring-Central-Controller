@@ -142,18 +142,23 @@ def record_sms(message):
     if not items:
         return message
 
-    if text:
-        get_slash_controller().create_text_message(
-            phone=phone, text=text, timestamp=timestamp, outbound=outbound,
-            monday_user_id=JEFF_BOT_USER_ID if outbound else None)
-
     # Fetched once, before the updates are written, so the body can say what the
     # updates actually carry rather than what the message claimed to have. Both
     # boards get the same bytes - downloading per board would fetch each photo
     # twice for every message.
     photos = RingCentralController().download_attachments(attachments)
-    if not outbound and photos:
-        photo_store.upload_sms_photos(message['id'], photos)
+
+    # A photo-only inbound MMS still gets a message, so its photos have one to hang off.
+    message_id = None
+    if text or photos:
+        message_id = get_slash_controller().create_text_message(
+            phone=phone, text=text or "", timestamp=timestamp, outbound=outbound,
+            monday_user_id=JEFF_BOT_USER_ID if outbound else None)
+
+    if photos:
+        stored = photo_store.upload_sms_photos(message['id'], photos)
+        if message_id and stored:
+            get_slash_controller().create_message_photos(message_id, stored)
     body = update_body(text, timestamp, outbound)
 
     update_ids = [monday.create_update(board, item_id, body)

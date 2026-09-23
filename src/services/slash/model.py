@@ -267,6 +267,29 @@ class SlashModel:
             raise SlashError(f"creating text message failed ({resp.status_code})")
         return resp.json()
 
+    def create_message_photo(
+        self,
+        *,
+        message_id: str,
+        s3_key: str,
+        content_type: str | None = None,
+    ) -> dict:
+        """POST /companies/{id}/persons/messages/{message_id}/photos -> the photo row.
+
+        monday_asset_id is left out: these photos come off RingCentral, not a board.
+        """
+        body = {"s3_key": s3_key}
+        if content_type:
+            body["content_type"] = content_type
+
+        company_id = self._ensure_company_id()
+        resp = self._authed_request(
+            "POST", f"/companies/{company_id}/persons/messages/{message_id}/photos", json=body)
+        if not resp.ok:
+            logger.error(f"[slash] creating message photo failed ({resp.status_code}): {resp.text}")
+            raise SlashError(f"creating message photo failed ({resp.status_code})")
+        return resp.json()
+
     def timeline_entries(self, *, phone: str) -> list[dict]:
         """GET /companies/{id}/persons/timeline -> every entry kept for this phone.
 

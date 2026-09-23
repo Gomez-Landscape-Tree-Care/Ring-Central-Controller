@@ -67,13 +67,30 @@ class SlashController:
         return None
 
     def create_text_message(self, phone: str, text: str, timestamp: datetime,
-                            outbound: bool, monday_user_id: str | None = None) -> None:
-        """Keep one SMS, in whichever direction it went, against the person it belongs to."""
-        self._model.create_text_message(
+                            outbound: bool, monday_user_id: str | None = None) -> str | None:
+        """Keep one SMS, in whichever direction it went, against the person it belongs to.
+
+        Answers the new message's id, which is what its photos are kept under.
+        """
+        message = self._model.create_text_message(
             phone=phone, text=text, outbound=outbound,
             monday_user_id=monday_user_id, timestamp=timestamp)
         logger.info("Recorded %s text for %s",
                     "outbound" if outbound else "inbound", phone)
+        return message.get("id")
+
+    def create_message_photos(self, message_id: str, photos: list[tuple[str, str]]) -> None:
+        """Keep each (s3_key, content_type) against the message it arrived on.
+
+        Best effort per photo, as the S3 upload is: the text is already in Slash,
+        and a raise here would redeliver it as a duplicate.
+        """
+        for s3_key, content_type in photos:
+            try:
+                self._model.create_message_photo(
+                    message_id=message_id, s3_key=s3_key, content_type=content_type)
+            except Exception:
+                logger.exception("Could not record photo %s on message %s", s3_key, message_id)
         return None
 
     def timeline_entries(self, phone: str) -> list[SlashTimelineEntry]:
